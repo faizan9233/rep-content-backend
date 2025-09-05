@@ -121,6 +121,7 @@ export const deleteUser = async (req, res) => {
 
 export const inviteUser = async (req, res) => {
   try {
+    
     const { name, email, type } = req.body;
 
     if (!name || !email || !type) {
@@ -154,6 +155,7 @@ export const inviteUser = async (req, res) => {
         type: newUser.type,
       },
     });
+
   } catch (err) {
     console.error("Invite user error:", err);
     res.status(500).json({ success: false, message: err.message });

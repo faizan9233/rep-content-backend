@@ -1,0 +1,8 @@
+{
+    "appService.zipIgnorePattern": [
+        "node_modules{,/**}",
+        ".vscode{,/**}"
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/ca39f360-db37-4586-9eb1-5a97c8496044/resourceGroups/CustomGForms/providers/Microsoft.Web/sites/rep-content-backend",
+    "appService.deploySubpath": "."
+}

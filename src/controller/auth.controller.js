@@ -2,6 +2,10 @@ import User from "../models/User.js";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 import querystring from "querystring";
+import { Frontend_url } from "../config/data.js";
+import dotenv from "dotenv";
+import { Client } from "@hubspot/api-client";
+dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
 
@@ -63,55 +67,43 @@ export const hubspotAuth = async (req, res) => {
 
 export const hubspotcallback = async (req, res) => {
   try {
-    const { code } = req.body;
-    const HUBSPOT_CLIENT_ID = process.env.HUBSPOT_CLIENT_ID;
-    const HUBSPOT_CLIENT_SECRET = process.env.HUBSPOT_CLIENT_SECRET;
-    const REDIRECT_URI = process.env.HUBSPOT_REDIRECT_URI;
-
-    const tokenResponse = await axios.post(
-      `https://api.hubapi.com/oauth/v1/token`,
-      new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: HUBSPOT_CLIENT_ID,
-        client_secret: HUBSPOT_CLIENT_SECRET,
-        redirect_uri: REDIRECT_URI,
-        code,
-      }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+    const { code } = req.query;
+   const hubspotClient = new Client();
+   const response = await hubspotClient.oauth.tokensApi.create(
+      'authorization_code',
+      code,
+      process.env.HUBSPOT_REDIRECT_URI,
+      process.env.HUBSPOT_CLIENT_ID,
+      process.env.HUBSPOT_CLIENT_SECRET
     );
 
-    const accessToken = tokenResponse.data.access_token;
-    const me = await axios.get(
-      "https://api.hubapi.com/oauth/v1/access-tokens/me",
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }
-    );
+    const { accessToken } = response;
 
-    const userInfo = await axios.get(
-      `https://api.hubapi.com/crm/v3/owners/${me.data.user_id}`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
+    const userInfo = await hubspotClient.apiRequest({
+      method: 'GET',
+      path: '/oauth/v1/access-tokens/' + accessToken
+    });
 
-    const email = userInfo.data.email;
+    const data = await userInfo.json();
+   const hubspotId = data.hub_id; 
 
-    let user = await User.findOne({ hubspotId: me.data.user_id });
+    let user = await User.findOne({ hubspotId });
     if (!user) {
-      user = await User.create({
-        hubspotId: me.data.user_id,
-        email,
-      });
+      user = await User.create({ hubspotId, email:data.user });
     }
 
     const token = generateToken(user);
-    res.json({ user, token });
+    res.redirect(`${Frontend_url}/setup?token=${token}`);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("HubSpot OAuth error:", err.response?.data || err.message);
+    res.status(500).json({ message: err.response?.data || err.message });
   }
 };
 
 export const zohoAuth = async (req, res) => {
-  const authUrl = `https://accounts.zoho.com/oauth/v2/auth?scope=ZohoCRM.modules.ALL&client_id=${
+  // Scope to access user info
+  // const scope = "ZohoCRM.settings.READ"; // instead of ZohoCRM.modules.ALL
+  const authUrl = `https://accounts.zoho.com/oauth/v2/auth&client_id=${
     process.env.ZOHO_CLIENT_ID
   }&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent(
     process.env.ZOHO_REDIRECT_URI
@@ -119,12 +111,15 @@ export const zohoAuth = async (req, res) => {
   res.redirect(authUrl);
 };
 
+
 export const zohoCallback = async (req, res) => {
   try {
-    const { code } = req.body;
+    const { code } = req.query; 
+
     const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
     const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
     const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI;
+    const FRONTEND_URL = process.env.FRONTEND_URL;
 
     const tokenResponse = await axios.post(
       `https://accounts.zoho.com/oauth/v2/token`,
@@ -141,28 +136,42 @@ export const zohoCallback = async (req, res) => {
     );
 
     const accessToken = tokenResponse.data.access_token;
-    const me = await axios.get("https://www.zohoapis.com/crm/v2/users", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
 
-    let user = await User.findOne({ zohoId: me.data.users[0].id });
-    if (!user) user = await User.create({ zohoId: me.data.users[0].id });
+    const userResponse = await axios.get(
+      "https://www.zohoapis.com/crm/v2/users",
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+
+    const zohoUser = userResponse.data.users[0];
+
+    let user = await User.findOne({ zohoId: zohoUser.id });
+    if (!user) {
+      user = await User.create({
+        zohoId: zohoUser.id,
+        email: zohoUser.email,
+        name: zohoUser.full_name,
+      });
+    }
 
     const token = generateToken(user);
-    res.json({ user, token });
+
+    res.redirect(`${FRONTEND_URL}/setup?token=${token}`);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Zoho OAuth error:", err.response?.data || err.message);
+    res.status(500).json({ message: err.response?.data || err.message });
   }
 };
 
 export const linkedinAuth = async (req, res) => {
+  const userEmail = req.query.us;
   const authUrl =
-    `https://www.linkedin.com/oauth/v2/authorization?` +
+    "https://www.linkedin.com/oauth/v2/authorization?" +
     querystring.stringify({
       response_type: "code",
       client_id: process.env.LINKEDIN_CLIENT_ID,
       redirect_uri: process.env.LINKEDIN_REDIRECT_URI,
-      scope: "openid profile w_member_social", // Added w_member_social
+      scope: "openid profile w_member_social email",
+      state: userEmail, 
     });
 
   res.redirect(authUrl);
@@ -170,7 +179,8 @@ export const linkedinAuth = async (req, res) => {
 
 export const linkedinCallback = async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query; 
+    const userEmail = state;
 
     const tokenRes = await axios.post(
       "https://www.linkedin.com/oauth/v2/accessToken",
@@ -185,37 +195,54 @@ export const linkedinCallback = async (req, res) => {
     );
 
     const accessToken = tokenRes.data.access_token;
-    const refreshToken = tokenRes.data.refresh_token;
+  
+    const userInfoRes = await axios.get("https://api.linkedin.com/v2/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-    // Use OpenID Connect userinfo endpoint
-    const userInfoRes = await axios.get(
-      "https://api.linkedin.com/v2/userinfo",
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
+    const linkedinId = userInfoRes.data.sub;
+     const linkedinName = userInfoRes.data.name; 
+    const user = await User.findOne({ email: userEmail });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.linkedinId = linkedinId;
+    user.linkedinToken = accessToken;
+    user.linkedinName = linkedinName;
+    user.linkedinProfilePic = userInfoRes.data.picture
+    await user.save();
+
+    res.redirect(
+      `${Frontend_url}/dashboard/content?linkAuth=${true}}`
     );
+  } catch (err) {
+    console.error("LinkedIn callback error:", err.response?.data || err.message);
+    res.redirect(`${Frontend_url}/dashboard/content`);
+  }
+};
 
-    const linkedinId = userInfoRes.data.sub; // sub is the user ID
-
+export const checkLinkedinAuth = async (req, res) => {
+  try {
     if (!req.user) {
       return res.status(401).json({ message: "No logged-in user" });
     }
 
-    req.user.linkedinId = linkedinId;
-    req.user.linkedinToken = accessToken;
-    req.user.linkedinRefreshToken = refreshToken;
-    await req.user.save();
+    if (req.user.linkedinId && req.user.linkedinToken) {
+      return res.json({
+        authenticated: true,
+        message: "User is authenticated with LinkedIn",
+        linkedinId: req.user.linkedinId,
+      });
+    }
 
-    res.json({
-      message: "LinkedIn connected successfully",
-      user: req.user,
-      userInfo: userInfoRes.data,
+    return res.json({
+      authenticated: false,
+      message: "User is not authenticated with LinkedIn",
     });
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).json({ message: "LinkedIn auth failed" });
+    console.error("Error checking LinkedIn auth:", err.message);
+    res.status(500).json({ message: "Server error" });
   }
 };
 

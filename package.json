@@ -8,6 +8,7 @@
     "dev": "nodemon ./src/server.js "
   },
   "dependencies": {
+    "@hubspot/api-client": "^13.2.0",
     "@slack/web-api": "^7.10.0",
     "@supabase/supabase-js": "^2.56.1",
     "axios": "^1.11.0",
@@ -17,11 +18,13 @@
     "crypto": "^1.0.1",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "fs": "^0.0.1-security",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.2",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.6",
     "nodemon": "^3.1.10",
+    "path": "^0.12.7",
     "querystring": "^0.2.1",
     "uuid": "^11.1.0"
   }

@@ -1,5 +1,5 @@
 import express from "express";
-import { emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
+import { checkLinkedinAuth, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
 import User from "../models/User.js";
 
@@ -21,16 +21,17 @@ router.get("/me", protect, async (req, res) => {
 });
 
 //hubspot
-router.post("/hubspot/callback", hubspotcallback);
+router.get("/hubspot/callback", hubspotcallback);
 router.get("/hubspot/auth", hubspotAuth);
 
 //zoho
 router.get("/zoho/auth", zohoAuth);
-router.post("/zoho/callback", zohoCallback);
+router.get("/zoho/callback", zohoCallback);
 
 //linkedin
 router.get("/linkedin/auth", linkedinAuth);
-router.get("/linkedin/callback",protect, linkedinCallback);
+router.get("/linkedin/callback", linkedinCallback);
+router.get("/check-linkedin-auth",protect, checkLinkedinAuth);
 
 //slack
 router.get("/slack/auth", slackRedirect);

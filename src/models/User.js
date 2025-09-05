@@ -15,8 +15,10 @@ const userSchema = new mongoose.Schema(
     hubspotToken: { type: String },
     zohoToken: { type: String },
 
+    linkedinName: { type: String },
     linkedinToken: { type: String },
     linkedinRefreshToken: { type: String },
+    linkedinProfilePic: { type: String },
 
     slackId: { type: String },     
     slackAccessToken: { type: String } 
