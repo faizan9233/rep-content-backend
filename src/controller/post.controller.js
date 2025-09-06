@@ -324,7 +324,7 @@ async function postToLinkedIn(accessToken, post,userId) {
 
     // Step 2: If post has media, upload first
     if (post.media && post.media.length > 0) {
-      const firstMedia = post.media[0]; // LinkedIn only supports one media item per post
+      const firstMedia = post.media[0];
       if (firstMedia.type === "Image") {
         console.log("Uploading image to LinkedIn...");
 
@@ -357,8 +357,6 @@ async function postToLinkedIn(accessToken, post,userId) {
           ].uploadUrl;
         const asset = registerUploadResponse.data.value.asset;
 
-        // 2.2 Upload actual file
-        // 2.2 Upload actual file
         const imageResponse = await axios.get(firstMedia.url, {
           responseType: "arraybuffer",
         });
@@ -366,7 +364,7 @@ async function postToLinkedIn(accessToken, post,userId) {
 
         await axios.put(uploadUrl, imageBuffer, {
           headers: {
-            "Content-Type": "image/png", // adjust based on type
+            "Content-Type": "image/png", 
           },
         });
 

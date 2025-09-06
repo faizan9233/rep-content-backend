@@ -21,7 +21,8 @@ const userSchema = new mongoose.Schema(
     linkedinProfilePic: { type: String },
 
     slackId: { type: String },     
-    slackAccessToken: { type: String } 
+    slackAccessToken: { type: String },
+
   },
   { timestamps: true }
 );

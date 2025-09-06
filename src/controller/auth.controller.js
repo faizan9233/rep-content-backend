@@ -5,6 +5,7 @@ import querystring from "querystring";
 import { Frontend_url } from "../config/data.js";
 import dotenv from "dotenv";
 import { Client } from "@hubspot/api-client";
+import SlackWorkspace from "../models/SlackWorkspace.js";
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
@@ -101,28 +102,29 @@ export const hubspotcallback = async (req, res) => {
 };
 
 export const zohoAuth = async (req, res) => {
-  // Scope to access user info
-  // const scope = "ZohoCRM.settings.READ"; // instead of ZohoCRM.modules.ALL
-  const authUrl = `https://accounts.zoho.com/oauth/v2/auth&client_id=${
+  const scope = "aaaserver.profile.READ"; // minimal scope to read profile info
+  const authUrl = `https://accounts.zoho.com/oauth/v2/auth?scope=${scope}&client_id=${
     process.env.ZOHO_CLIENT_ID
   }&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent(
     process.env.ZOHO_REDIRECT_URI
   )}`;
+
   res.redirect(authUrl);
 };
 
 
 export const zohoCallback = async (req, res) => {
   try {
-    const { code } = req.query; 
+    const { code } = req.query;
 
     const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
     const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
     const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI;
-    const FRONTEND_URL = process.env.FRONTEND_URL;
+    const FRONTEND_URL = Frontend_url;
 
+    // Exchange code for access token
     const tokenResponse = await axios.post(
-      `https://accounts.zoho.com/oauth/v2/token`,
+      "https://accounts.zoho.com/oauth/v2/token",
       null,
       {
         params: {
@@ -137,19 +139,22 @@ export const zohoCallback = async (req, res) => {
 
     const accessToken = tokenResponse.data.access_token;
 
+    // Fetch user profile (name + email)
     const userResponse = await axios.get(
-      "https://www.zohoapis.com/crm/v2/users",
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      "https://accounts.zoho.com/oauth/user/info",
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
     );
 
-    const zohoUser = userResponse.data.users[0];
+    const zohoUser = userResponse.data;
 
-    let user = await User.findOne({ zohoId: zohoUser.id });
+    let user = await User.findOne({ zohoId: zohoUser.ZUID });
     if (!user) {
       user = await User.create({
-        zohoId: zohoUser.id,
-        email: zohoUser.email,
-        name: zohoUser.full_name,
+        zohoId: zohoUser.ZUID,
+        email: zohoUser.Email,
+        name: zohoUser.Display_Name,
       });
     }
 
@@ -158,7 +163,9 @@ export const zohoCallback = async (req, res) => {
     res.redirect(`${FRONTEND_URL}/setup?token=${token}`);
   } catch (err) {
     console.error("Zoho OAuth error:", err.response?.data || err.message);
-    res.status(500).json({ message: err.response?.data || err.message });
+    res
+      .status(500)
+      .json({ message: err.response?.data || err.message });
   }
 };
 
@@ -246,51 +253,103 @@ export const checkLinkedinAuth = async (req, res) => {
   }
 };
 
-const CLIENT_ID = process.env.SLACK_CLIENT_ID;
-const CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET;
-const REDIRECT_URI = process.env.SLACK_REDIRECT_URI;
+// const CLIENT_ID = process.env.SLACK_CLIENT_ID;
+// const CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET;
+// const REDIRECT_URI = process.env.SLACK_REDIRECT_URI;
 
-export const slackRedirect = (req, res) => {
-  const url = `https://slack.com/oauth/v2/authorize?scope=identity.basic,users:read&client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(
-    REDIRECT_URI
-  )}`;
-  res.redirect(url);
-};
+  export const slackRedirect = (req, res) => {
+    const { userId } = req.query; 
 
-export const slackCallback = async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).send("No code provided");
+    const url = `https://slack.com/oauth/v2/authorize?client_id=${process.env.SLACK_CLIENT_ID}
+      &scope=chat:write,users:read,users:read.email
+      &redirect_uri=${encodeURIComponent(process.env.SLACK_REDIRECT_URI)}
+      &state=${userId}`;
 
+    res.redirect(url);
+  };
+
+
+ export const slackCallback = async (req, res) => {
   try {
-    const tokenResponse = await axios.post(
-      "https://slack.com/api/oauth.v2.access",
-      null,
-      {
-        params: {
-          code,
-          client_id: CLIENT_ID,
-          client_secret: CLIENT_SECRET,
-          redirect_uri: REDIRECT_URI,
-        },
-      }
-    );
+    const { code, state } = req.query;
 
-    const { authed_user } = tokenResponse.data;
-    if (!authed_user) return res.status(400).send("Slack auth failed");
+    if (!code) {
+      return res.status(400).json({ error: "Missing authorization code" });
+    }
 
-    const slackId = authed_user.id;
-    const accessToken = authed_user.access_token;
+    const tokenRes = await axios.post("https://slack.com/api/oauth.v2.access", null, {
+      params: {
+        code,
+        client_id: process.env.SLACK_CLIENT_ID,
+        client_secret: process.env.SLACK_CLIENT_SECRET,
+        redirect_uri: process.env.SLACK_REDIRECT_URI,
+      },
+    });
 
-    const user = await User.findOne({ email: req.user.email });
-    if (!user) return res.status(404).send("User not found");
+    const data = tokenRes.data;
+    if (!data.ok) {
+      return res.status(400).json({ error: "Slack auth failed", details: data });
+    }
 
-    user.slackId = slackId;
-    user.slackAccessToken = accessToken;
-    await user.save();
+    const { access_token, team, authed_user } = data;
+    const teamId = team.id;
+    const teamName = team.name;
 
-    res.send("Slack account connected successfully!");
+    let installerEmail = null;
+    let installerSlackId = null;
+
+    try {
+      const userRes = await axios.get("https://slack.com/api/users.info", {
+        headers: { Authorization: `Bearer ${access_token}` },
+        params: { user: authed_user.id },
+      });
+
+      const installer = userRes.data.user;
+      installerEmail = installer?.profile?.email || null;
+      installerSlackId = installer?.id || null;
+    } catch (err) {
+      console.warn("Could not fetch installer email:", err.message);
+    }
+
+    // 3️⃣ Find user in DB
+    let linkedUser = null;
+
+    if (state) {
+      // Case 1: install started in your app → state contains userId
+      linkedUser = await User.findById(state);
+    } else if (installerEmail) {
+      // Case 2: install started from Slack directory → match by email
+      linkedUser = await User.findOne({ email: installerEmail });
+    }
+
+    // 4️⃣ Save or update Slack workspace
+    let workspace = await SlackWorkspace.findOne({ teamId });
+    if (!workspace) {
+      workspace = new SlackWorkspace({ teamId });
+    }
+
+    workspace.teamName = teamName;
+    workspace.botToken = access_token;
+    workspace.installedBy = {
+      slackUserId: installerSlackId,
+      email: installerEmail,
+    };
+    workspace.linkedUser = linkedUser?._id || null;
+
+    await workspace.save();
+
+    // 5️⃣ Redirect back to frontend
+    if (linkedUser) {
+      return res.redirect(
+        `${Frontend_url}/admin-dashboard/upload?user=${linkedUser._id}&team=${teamId}`
+      );
+    } else {
+      return res.redirect(
+        `${Frontend_url}/admin-dashboard/upload?pending=true&team=${teamId}`
+      );
+    }
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Slack auth error");
+    console.error("Slack OAuth error:", err);
+    res.status(500).json({ error: "Slack OAuth failed" });
   }
 };

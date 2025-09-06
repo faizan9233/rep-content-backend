@@ -2,6 +2,7 @@ import express from "express";
 import { checkLinkedinAuth, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
 import { protect } from "../middleware/auth.middleware.js";
 import User from "../models/User.js";
+import SlackWorkspace from "../models/SlackWorkspace.js";
 
 const router = express.Router();
 
@@ -15,6 +16,17 @@ router.get("/me", protect, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
     res.json(user);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+router.get("/get-workspace", protect, async (req, res) => {
+  try {
+    const workspace = await SlackWorkspace.findOne({linkedUser:req.user.id})
+    if (!workspace) {
+      return res.status(404).json({ message: "Workspace not found" });
+    }
+    res.json(workspace);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -35,6 +47,6 @@ router.get("/check-linkedin-auth",protect, checkLinkedinAuth);
 
 //slack
 router.get("/slack/auth", slackRedirect);
-router.post("/slack/callback", slackCallback);
+router.get("/slack/callback", slackCallback);
 
 export default router;
