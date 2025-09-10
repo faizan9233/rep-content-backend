@@ -69,9 +69,10 @@ export const hubspotAuth = async (req, res) => {
 export const hubspotcallback = async (req, res) => {
   try {
     const { code } = req.query;
-   const hubspotClient = new Client();
-   const response = await hubspotClient.oauth.tokensApi.create(
-      'authorization_code',
+    const hubspotClient = new Client();
+
+    const response = await hubspotClient.oauth.tokensApi.create(
+      "authorization_code",
       code,
       process.env.HUBSPOT_REDIRECT_URI,
       process.env.HUBSPOT_CLIENT_ID,
@@ -81,19 +82,36 @@ export const hubspotcallback = async (req, res) => {
     const { accessToken } = response;
 
     const userInfo = await hubspotClient.apiRequest({
-      method: 'GET',
-      path: '/oauth/v1/access-tokens/' + accessToken
+      method: "GET",
+      path: "/oauth/v1/access-tokens/" + accessToken,
     });
 
     const data = await userInfo.json();
-   const hubspotId = data.hub_id; 
+
+    const hubspotId = data.hub_id;
+    const email = data.user;
+    const userId = data.user_id;
+
+    const ownerInfo = await hubspotClient.apiRequest({
+      method: "GET",
+      path: `/crm/v3/owners/${userId}`,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    const ownerData = await ownerInfo.json();
+    const fullName = `${ownerData.firstName || ""} ${ownerData.lastName || ""}`.trim();
 
     let user = await User.findOne({ hubspotId });
     if (!user) {
-      user = await User.create({ hubspotId, email:data.user });
+      user = await User.create({
+        hubspotId,
+        email,
+        name: fullName || email,
+      });
     }
 
     const token = generateToken(user);
+
     res.redirect(`${Frontend_url}/setup?token=${token}`);
   } catch (err) {
     console.error("HubSpot OAuth error:", err.response?.data || err.message);
@@ -253,10 +271,6 @@ export const checkLinkedinAuth = async (req, res) => {
   }
 };
 
-// const CLIENT_ID = process.env.SLACK_CLIENT_ID;
-// const CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET;
-// const REDIRECT_URI = process.env.SLACK_REDIRECT_URI;
-
   export const slackRedirect = (req, res) => {
     const { userId } = req.query; 
 
@@ -322,7 +336,6 @@ export const checkLinkedinAuth = async (req, res) => {
       linkedUser = await User.findOne({ email: installerEmail });
     }
 
-    // 4️⃣ Save or update Slack workspace
     let workspace = await SlackWorkspace.findOne({ teamId });
     if (!workspace) {
       workspace = new SlackWorkspace({ teamId });
@@ -338,7 +351,6 @@ export const checkLinkedinAuth = async (req, res) => {
 
     await workspace.save();
 
-    // 5️⃣ Redirect back to frontend
     if (linkedUser) {
       return res.redirect(
         `${Frontend_url}/admin-dashboard/upload?user=${linkedUser._id}&team=${teamId}`

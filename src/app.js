@@ -8,7 +8,6 @@ import connectDB from './config/database.js';
 import router from "./routes/auth.routes.js";
 import postRouter from "./routes/post.routes.js";
 import adminRouter from "./routes/admin.routes.js";
-import { broadcastMessageToWorkspace } from "./controller/slack.controller.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

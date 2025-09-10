@@ -5,6 +5,9 @@ import User from "../models/User.js";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
 
+import https from "https";
+import { Parser } from "htmlparser2";
+
 export const createPost = async (req, res) => {
   try {
     const { title, description } = req.body;
@@ -80,12 +83,102 @@ export const createPost = async (req, res) => {
   }
 };
 
+export const createLinkPost = async (req, res) => {
+  try {
+    const { title, postLink,description,image } = req.body;
+
+    if (!title || !postLink) {
+      return res.status(400).json({ success: false, message: "Title and link are required" });
+    }
+
+    const newPost = new Post({
+      title,
+      postLink,
+      description,
+      media:[{
+        url:image,
+        type:"Image"
+      }],
+      createdBy: req.user._id,
+    });
+
+    await newPost.save();
+
+    res.status(201).json({ success: true, data: newPost });
+  } catch (error) {
+    console.error("Error creating link post:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+
+export const getLinkedInPostDetails = (req, res) => {
+  const { url } = req.body;
+
+  const linkedinRegex = /^https?:\/\/(www\.)?linkedin\.com\/posts\/[a-zA-Z0-9_-]+/;
+  if (!url || !linkedinRegex.test(url)) {
+    return res.status(400).json({ message: "Invalid LinkedIn post URL" });
+  }
+
+  https
+    .get(
+      url,
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        },
+      },
+      (response) => {
+        let html = "";
+
+        response.on("data", (chunk) => (html += chunk));
+        response.on("end", () => {
+          try {
+            let title = null;
+            let description = null;
+            let image = null;
+            let urlCanonical = url;
+
+            const parser = new Parser({
+              onopentag(name, attribs) {
+                if (name === "meta") {
+                  if (attribs.property === "og:title") title = attribs.content;
+                  if (attribs.property === "og:description") description = attribs.content;
+                  if (attribs.property === "og:image") image = attribs.content;
+                  if (attribs.property === "og:url") urlCanonical = attribs.content;
+                }
+              },
+            }, { decodeEntities: true });
+
+            parser.write(html);
+            parser.end();
+
+            res.json({ title, description, image, url: urlCanonical });
+          } catch (err) {
+            console.error(err);
+            res
+              .status(500)
+              .json({ message: "Failed to parse LinkedIn post HTML", error: err.message });
+          }
+        });
+      }
+    )
+    .on("error", (err) => {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch LinkedIn post", error: err.message });
+    });
+};
+
+
 export const getAllPosts = async (req, res) => {
   try {
-      const posts = await Post.find({})
+      const posts = await Post.find()
+      .sort({ createdAt: -1 })
       .populate("createdBy", "name email") 
       .populate("likes", "name email")  
-      .populate("shares", "name email linkedinProfilePic");
+      .populate("shares", "name email linkedinProfilePic")
+      .populate("repost", "name email");
     
 
     res.json(posts);
@@ -254,19 +347,19 @@ export const deletePost = async (req, res) => {
   }
 };
 
-export const likePost = async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ message: "Post not found" });
+// export const likePost = async (req, res) => {
+//   try {
+//     const post = await Post.findById(req.params.id);
+//     if (!post) return res.status(404).json({ message: "Post not found" });
 
-    if (!post.likes.includes(req.user._id)) post.likes.push(req.user._id);
-    await post.save();
+//     if (!post.likes.includes(req.user._id)) post.likes.push(req.user._id);
+//     await post.save();
 
-    res.json({ message: "Post liked", likes: post.likes.length });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
+//     res.json({ message: "Post liked", likes: post.likes.length });
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
 
 export const sharePost = async (req, res) => {
   try {
@@ -461,3 +554,155 @@ export const createLinkedInPost = async (req, res) => {
 };
 
 
+
+const pushLike = async (postId, userId) => {
+  try {
+    const postObjectId = new mongoose.Types.ObjectId(postId);
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    const updatedPost = await Post.findByIdAndUpdate(
+      postObjectId,
+      { $addToSet: { likes: userObjectId } },
+      { new: true }
+    );
+
+    console.log("✅ Updated Post Likes:", updatedPost);
+    return updatedPost;
+  } catch (err) {
+    console.error("❌ Error pushing like:", err.message);
+    throw err;
+  }
+};
+
+const pushRepost = async (postId, userId) => {
+  try {
+    const postObjectId = new mongoose.Types.ObjectId(postId);
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    const updatedPost = await Post.findByIdAndUpdate(
+      postObjectId,
+      { $addToSet: { repost: userObjectId } },
+      { new: true }
+    );
+
+    console.log("✅ Updated Post Reposts:", updatedPost);
+    return updatedPost;
+  } catch (err) {
+    console.error("❌ Error pushing repost:", err.message);
+    throw err;
+  }
+};
+
+async function likeLinkedInPostByUrl(accessToken, postUrl, postId, userId) {
+  try {
+    const postInfo = postUrl;
+    if (!postInfo) throw new Error("Invalid LinkedIn post URL");
+
+    // Determine the correct URN
+    const objectUrn =
+      postInfo.type === "activity"
+        ? `urn:li:activity:${postInfo.id}`
+        : `urn:li:ugcPost:${postInfo.id}`;
+
+    // Make API call
+    await axios.post(
+      "https://api.linkedin.com/v2/reactions",
+      {
+        reactionType: "LIKE",
+        object: objectUrn,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "X-Restli-Protocol-Version": "2.0.0",
+        },
+      }
+    );
+
+    // Update your DB
+    await pushLike(postId, userId);
+
+    console.log("✅ LinkedIn Post Liked Successfully");
+    return { success: true };
+  } catch (error) {
+    console.error("❌ LinkedIn Like Error:", error.response?.data || error.message);
+    throw error;
+  }
+}
+
+
+async function repostLinkedInPost(accessToken, linkedinPostId, postId, userId, message) {
+  try {
+    const reshareBody = {
+      author: `urn:li:person:${userId}`,
+      lifecycleState: "PUBLISHED",
+      specificContent: {
+        "com.linkedin.ugc.ShareContent": {
+          shareCommentary: { text: message || "Check this out!" },
+          shareMediaCategory: "ARTICLE",
+          media: [
+            {
+              status: "READY",
+              originalUrl: `https://www.linkedin.com/feed/update/${linkedinPostId}`,
+              description: { text: message || "" },
+              title: { text: "Repost" },
+            },
+          ],
+        },
+      },
+      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
+    };
+
+    await axios.post("https://api.linkedin.com/v2/ugcPosts", reshareBody, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+    });
+
+    await pushRepost(postId, userId);
+
+    console.log("✅ LinkedIn Post Reposted Successfully");
+    return { success: true };
+  } catch (error) {
+    console.error("❌ LinkedIn Repost Error:", error.response?.data || error.message);
+    throw error;
+  }
+}
+
+export const likePost = async (req, res) => {
+  try {
+    const { postId, linkedinPostId } = req.body;
+    const user = req.user;
+
+    if (!user.linkedinToken || !linkedinPostId) {
+      return res.status(400).json({ message: "LinkedIn token and post ID required" });
+    }
+
+    // await likeLinkedInPostByUrl(user.linkedinToken, linkedinPostId, postId, user._id);
+    await pushLike(postId, user._id);
+    res.status(200).json({ message: "Post liked successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to like post", error: error.message });
+  }
+};
+
+export const repostPost = async (req, res) => {
+  try {
+    const { postId, linkedinPostId, message } = req.body;
+    const user = req.user;
+
+    if (!user.linkedinToken || !linkedinPostId) {
+      return res.status(400).json({ message: "LinkedIn token and post ID required" });
+    }
+
+    // await repostLinkedInPost(user.linkedinToken, linkedinPostId, postId, user._id, message);
+    await pushRepost(postId, user._id);
+
+    res.status(200).json({ message: "Post reposted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to repost", error: error.message });
+  }
+};
