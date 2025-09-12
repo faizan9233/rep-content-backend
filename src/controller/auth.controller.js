@@ -6,6 +6,10 @@ import { Frontend_url } from "../config/data.js";
 import dotenv from "dotenv";
 import { Client } from "@hubspot/api-client";
 import SlackWorkspace from "../models/SlackWorkspace.js";
+import Admin from "../models/Admin.js";
+import Invite from "../models/Invite.js";
+import crypto from "crypto";
+import Company from "../models/Company.js";
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
@@ -18,17 +22,134 @@ const generateToken = (user) => {
   );
 };
 
+export const createSuperAdmin = async (req, res) => {
+  try {
+    const { name, email, password, companyName } = req.body;
+
+    // Check if superadmin already exists
+    const existingSuperAdmin = await Admin.findOne({ role: "superadmin" });
+    if (existingSuperAdmin) {
+      return res.status(400).json({ message: "Superadmin already exists" });
+    }
+
+    // Create superadmin
+    const superadmin = await Admin.create({
+      name,
+      email,
+      password,
+      role: "superadmin",
+    });
+
+    // Create company and link superadmin as owner
+    const company = await Company.create({
+      name: companyName,
+      owner: superadmin._id,
+      admins: [superadmin._id],
+      users: [],
+    });
+
+    // Link company to superadmin
+    superadmin.company = company._id;
+    await superadmin.save();
+
+    res.status(201).json({ superadmin, company });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const createInvite = async (req, res) => {
+  try {
+    const token = crypto.randomBytes(20).toString("hex");
+    // Create invite linked to admin and admin's company
+    const invite = await Invite.create({
+      token,
+      admin: req.user._id,
+      company: req.user.company,
+    });
+
+    const signupLink = `${Frontend_url}/signup?token=${token}`;
+
+    res.status(201).json({
+      success: true,
+      message: "Invite created successfully",
+      link: signupLink,
+    });
+  } catch (err) {
+    console.error("Create invite error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 export const emailSignUp = async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, inviteToken } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "Email & password required" });
+    }
+
+    // Find the invite
+    let invite;
+    if (inviteToken) {
+      invite = await Invite.findOne({ token: inviteToken });
+      if (!invite) {
+        return res.status(400).json({ message: "Invalid or expired invite" });
+      }
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: "Email already exists" });
+    }
+
+    // Create user linked to company/admin from invite
+    const user = await User.create({
+      email,
+      password,
+      name,
+      role: "salesperson",
+      admin: invite?.admin || null,
+      company: invite?.company || null,
+    });
+
+    // Add user to company.users array if invite exists
+    if (invite?.company) {
+      await Company.findByIdAndUpdate(invite.company, {
+        $addToSet: { users: user._id },
+      });
+    }
+
+    const token = generateToken(user);
+
+    res.status(201).json({
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        admin: user.admin,
+        company: user.company,
+      },
+      token,
+    });
+  } catch (err) {
+    console.error("Signup error:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const adminEmailSignUp = async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
     if (!email || !password)
       return res.status(400).json({ message: "Email & password required" });
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await Admin.findOne({ email });
     if (existingUser)
       return res.status(400).json({ message: "Email already exists" });
 
-    const user = await User.create({ email, password, name, role });
+    const user = await Admin.create({ email, password, name });
     const token = generateToken(user);
     res.status(201).json({ user, token });
   } catch (err) {
@@ -39,38 +160,121 @@ export const emailSignUp = async (req, res) => {
 export const emailLogin = async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password)
+
+    if (!email || !password) {
       return res.status(400).json({ message: "Email & password required" });
+    }
 
-    const user = await User.findOne({ email });
-    if (!user)
+    let account = await User.findOne({ email });
+    let accountType = "user";
+
+    if (!account) {
+      account = await Admin.findOne({ email });
+      accountType = "admin";
+    }
+
+    if (!account) {
       return res.status(400).json({ message: "Invalid email or password" });
+    }
 
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch)
+    const isMatch = await account.comparePassword(password);
+    if (!isMatch) {
       return res.status(400).json({ message: "Invalid email or password" });
+    }
 
-    const token = generateToken(user);
-    res.json({ user, token });
+    const token = generateToken(account);
+
+    res.json({
+      success: true,
+      message: "Login successful",
+      accountType,
+      user: {
+        id: account._id,
+        name: account.name,
+        email: account.email,
+        role: account.role,
+      },
+      token,
+    });
   } catch (err) {
+    console.error("Login error:", err);
     res.status(500).json({ message: err.message });
   }
 };
 
+export const promoteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.user.role !== "superadmin") {
+      return res
+        .status(403)
+        .json({ message: "Only superadmin can promote users" });
+    }
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const newAdmin = await Admin.create({
+      email: user.email,
+      name: user.name,
+      password: user.password,
+      role: "admin",
+      company: req.user.company,
+    });
+
+    await user.deleteOne();
+
+    res.json({ message: "User promoted to admin", admin: newAdmin });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const demoteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.user.role !== "superadmin") {
+      return res
+        .status(403)
+        .json({ message: "Only superadmin can demote admins" });
+    }
+
+    // find admin
+    const admin = await Admin.findById(userId);
+    if (!admin) return res.status(404).json({ message: "Admin not found" });
+    const newUser = await User.create({
+      email: admin.email,
+      name: admin.name,
+      password: admin.password,
+      role: "user",
+      company: admin.company,
+    });
+
+    await admin.deleteOne();
+
+    res.json({ message: "Admin demoted to user", user: newUser });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const hubspotAuth = async (req, res) => {
+  const { token } = req.query;
   const authUrl = `https://app.hubspot.com/oauth/authorize?client_id=${
     process.env.HUBSPOT_CLIENT_ID
   }&redirect_uri=${encodeURIComponent(
     process.env.HUBSPOT_REDIRECT_URI
-  )}&scope=oauth`;
+  )}&scope=oauth&state=${token || ""}`;
   res.redirect(authUrl);
 };
 
 export const hubspotcallback = async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query;
     const hubspotClient = new Client();
 
+    // Exchange code for access token
     const response = await hubspotClient.oauth.tokensApi.create(
       "authorization_code",
       code,
@@ -81,32 +285,62 @@ export const hubspotcallback = async (req, res) => {
 
     const { accessToken } = response;
 
+    // Fetch user info
     const userInfo = await hubspotClient.apiRequest({
       method: "GET",
-      path: "/oauth/v1/access-tokens/" + accessToken,
+      path: `/oauth/v1/access-tokens/${accessToken}`,
     });
-
     const data = await userInfo.json();
 
     const hubspotId = data.hub_id;
     const email = data.user;
     const userId = data.user_id;
 
+    // Fetch owner info for name
     const ownerInfo = await hubspotClient.apiRequest({
       method: "GET",
       path: `/crm/v3/owners/${userId}`,
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-
     const ownerData = await ownerInfo.json();
-    const fullName = `${ownerData.firstName || ""} ${ownerData.lastName || ""}`.trim();
+    const fullName = `${ownerData.firstName || ""} ${
+      ownerData.lastName || ""
+    }`.trim();
+
+    let adminId, company, invite;
+    if (state) {
+      invite = await Invite.findOne({ token: state });
+      if (invite) {
+        adminId = invite.admin;
+        company = invite.company;
+      }
+    }
 
     let user = await User.findOne({ hubspotId });
+
     if (!user) {
       user = await User.create({
         hubspotId,
         email,
         name: fullName || email,
+        admin: adminId,
+        company,
+        hubspotToken: accessToken,
+      });
+    } else {
+      user.email = user.email || email;
+      user.name = user.name || fullName || email;
+      user.hubspotToken = accessToken;
+
+      if (adminId && !user.admin) user.admin = adminId;
+      if (company && !user.company) user.company = company;
+
+      await user.save();
+    }
+
+    if (invite?.company) {
+      await Company.findByIdAndUpdate(invite.company, {
+        $addToSet: { users: user._id },
       });
     }
 
@@ -118,29 +352,28 @@ export const hubspotcallback = async (req, res) => {
     res.status(500).json({ message: err.response?.data || err.message });
   }
 };
-
 export const zohoAuth = async (req, res) => {
-  const scope = "aaaserver.profile.READ"; // minimal scope to read profile info
+  const { token } = req.query;
+  const scope = "aaaserver.profile.READ";
+
   const authUrl = `https://accounts.zoho.com/oauth/v2/auth?scope=${scope}&client_id=${
     process.env.ZOHO_CLIENT_ID
   }&response_type=code&access_type=offline&redirect_uri=${encodeURIComponent(
     process.env.ZOHO_REDIRECT_URI
-  )}`;
+  )}&state=${token || ""}`;
 
   res.redirect(authUrl);
 };
 
-
 export const zohoCallback = async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, state } = req.query;
 
     const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
     const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
     const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI;
     const FRONTEND_URL = Frontend_url;
 
-    // Exchange code for access token
     const tokenResponse = await axios.post(
       "https://accounts.zoho.com/oauth/v2/token",
       null,
@@ -157,7 +390,6 @@ export const zohoCallback = async (req, res) => {
 
     const accessToken = tokenResponse.data.access_token;
 
-    // Fetch user profile (name + email)
     const userResponse = await axios.get(
       "https://accounts.zoho.com/oauth/user/info",
       {
@@ -167,12 +399,40 @@ export const zohoCallback = async (req, res) => {
 
     const zohoUser = userResponse.data;
 
+    let adminId, company, invite;
+    if (state) {
+      invite = await Invite.findOne({ token: state });
+      if (invite) {
+        adminId = invite.admin;
+        company = invite.company;
+      }
+    }
+
     let user = await User.findOne({ zohoId: zohoUser.ZUID });
+
     if (!user) {
       user = await User.create({
         zohoId: zohoUser.ZUID,
         email: zohoUser.Email,
         name: zohoUser.Display_Name,
+        admin: adminId,
+        company,
+        zohoToken: accessToken,
+      });
+    } else {
+      user.email = user.email || zohoUser.Email;
+      user.name = user.name || zohoUser.Display_Name;
+      user.zohoToken = accessToken;
+
+      if (adminId && !user.admin) user.admin = adminId;
+      if (company && !user.company) user.company = company;
+
+      await user.save();
+    }
+
+    if (invite?.company) {
+      await Company.findByIdAndUpdate(invite.company, {
+        $addToSet: { users: user._id },
       });
     }
 
@@ -181,9 +441,7 @@ export const zohoCallback = async (req, res) => {
     res.redirect(`${FRONTEND_URL}/setup?token=${token}`);
   } catch (err) {
     console.error("Zoho OAuth error:", err.response?.data || err.message);
-    res
-      .status(500)
-      .json({ message: err.response?.data || err.message });
+    res.status(500).json({ message: err.response?.data || err.message });
   }
 };
 
@@ -196,7 +454,7 @@ export const linkedinAuth = async (req, res) => {
       client_id: process.env.LINKEDIN_CLIENT_ID,
       redirect_uri: process.env.LINKEDIN_REDIRECT_URI,
       scope: "openid profile w_member_social email",
-      state: userEmail, 
+      state: userEmail,
     });
 
   res.redirect(authUrl);
@@ -204,7 +462,7 @@ export const linkedinAuth = async (req, res) => {
 
 export const linkedinCallback = async (req, res) => {
   try {
-    const { code, state } = req.query; 
+    const { code, state } = req.query;
     const userEmail = state;
 
     const tokenRes = await axios.post(
@@ -220,13 +478,16 @@ export const linkedinCallback = async (req, res) => {
     );
 
     const accessToken = tokenRes.data.access_token;
-  
-    const userInfoRes = await axios.get("https://api.linkedin.com/v2/userinfo", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+
+    const userInfoRes = await axios.get(
+      "https://api.linkedin.com/v2/userinfo",
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
 
     const linkedinId = userInfoRes.data.sub;
-     const linkedinName = userInfoRes.data.name; 
+    const linkedinName = userInfoRes.data.name;
     const user = await User.findOne({ email: userEmail });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -235,14 +496,15 @@ export const linkedinCallback = async (req, res) => {
     user.linkedinId = linkedinId;
     user.linkedinToken = accessToken;
     user.linkedinName = linkedinName;
-    user.linkedinProfilePic = userInfoRes.data.picture
+    user.linkedinProfilePic = userInfoRes.data.picture;
     await user.save();
 
-    res.redirect(
-      `${Frontend_url}/dashboard/content?linkAuth=${true}}`
-    );
+    res.redirect(`${Frontend_url}/dashboard/content?linkAuth=${true}}`);
   } catch (err) {
-    console.error("LinkedIn callback error:", err.response?.data || err.message);
+    console.error(
+      "LinkedIn callback error:",
+      err.response?.data || err.message
+    );
     res.redirect(`${Frontend_url}/dashboard/content`);
   }
 };
@@ -271,19 +533,20 @@ export const checkLinkedinAuth = async (req, res) => {
   }
 };
 
-  export const slackRedirect = (req, res) => {
-    const { userId } = req.query; 
+export const slackRedirect = (req, res) => {
+  const { userId } = req.query;
 
-    const url = `https://slack.com/oauth/v2/authorize?client_id=${process.env.SLACK_CLIENT_ID}
+  const url = `https://slack.com/oauth/v2/authorize?client_id=${
+    process.env.SLACK_CLIENT_ID
+  }
       &scope=chat:write,users:read,users:read.email
       &redirect_uri=${encodeURIComponent(process.env.SLACK_REDIRECT_URI)}
       &state=${userId}`;
 
-    res.redirect(url);
-  };
+  res.redirect(url);
+};
 
-
- export const slackCallback = async (req, res) => {
+export const slackCallback = async (req, res) => {
   try {
     const { code, state } = req.query;
 
@@ -291,18 +554,24 @@ export const checkLinkedinAuth = async (req, res) => {
       return res.status(400).json({ error: "Missing authorization code" });
     }
 
-    const tokenRes = await axios.post("https://slack.com/api/oauth.v2.access", null, {
-      params: {
-        code,
-        client_id: process.env.SLACK_CLIENT_ID,
-        client_secret: process.env.SLACK_CLIENT_SECRET,
-        redirect_uri: process.env.SLACK_REDIRECT_URI,
-      },
-    });
+    const tokenRes = await axios.post(
+      "https://slack.com/api/oauth.v2.access",
+      null,
+      {
+        params: {
+          code,
+          client_id: process.env.SLACK_CLIENT_ID,
+          client_secret: process.env.SLACK_CLIENT_SECRET,
+          redirect_uri: process.env.SLACK_REDIRECT_URI,
+        },
+      }
+    );
 
     const data = tokenRes.data;
     if (!data.ok) {
-      return res.status(400).json({ error: "Slack auth failed", details: data });
+      return res
+        .status(400)
+        .json({ error: "Slack auth failed", details: data });
     }
 
     const { access_token, team, authed_user } = data;
@@ -330,10 +599,10 @@ export const checkLinkedinAuth = async (req, res) => {
 
     if (state) {
       // Case 1: install started in your app → state contains userId
-      linkedUser = await User.findById(state);
+      linkedUser = await Admin.findById(state);
     } else if (installerEmail) {
       // Case 2: install started from Slack directory → match by email
-      linkedUser = await User.findOne({ email: installerEmail });
+      linkedUser = await Admin.findOne({ email: installerEmail });
     }
 
     let workspace = await SlackWorkspace.findOne({ teamId });

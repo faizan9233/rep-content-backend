@@ -1,5 +1,5 @@
 import express from 'express'
-import { adminOnly, protect } from '../middleware/auth.middleware.js';
+import { adminOnly, protect  } from '../middleware/auth.middleware.js';
 import { deleteUser, editUserRole, inviteUser } from '../controller/main.controller.js';
 
 

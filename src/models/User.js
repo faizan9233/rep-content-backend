@@ -6,7 +6,9 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, sparse: true },
     name: { type: String },
     password: { type: String },
-    role: { type: String, enum: ['admin', 'salesperson'], default: 'salesperson' },
+    role: { type: String, default: 'salesperson' },
+    
+    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
 
     hubspotId: { type: String, unique: true, sparse: true },
     zohoId: { type: String, unique: true, sparse: true },
@@ -19,9 +21,6 @@ const userSchema = new mongoose.Schema(
     linkedinToken: { type: String },
     linkedinRefreshToken: { type: String },
     linkedinProfilePic: { type: String },
-
-    slackId: { type: String },     
-    slackAccessToken: { type: String },
 
   },
   { timestamps: true }

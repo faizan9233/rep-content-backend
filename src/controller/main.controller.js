@@ -4,6 +4,8 @@ import User from "../models/User.js";
 import crypto from "crypto";
 import { sendEmail } from "../utils/send-mail.js";
 import bcrypt from "bcryptjs";
+import Admin from "../models/Admin.js";
+import Company from "../models/Company.js";
 
 
 export const shareOnLinkedIn = async (req, res) => {
@@ -121,43 +123,74 @@ export const deleteUser = async (req, res) => {
 
 export const inviteUser = async (req, res) => {
   try {
-    
     const { name, email, type } = req.body;
+    const inviter = req.user; 
 
     if (!name || !email || !type) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required",
+      });
     }
 
+    const existingAdmin = await Admin.findOne({ email });
     const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: "User already exists" });
+
+    if (existingAdmin || existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User already exists",
+      });
     }
 
     const plainPassword = crypto.randomBytes(6).toString("hex");
     const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
-    const newUser = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-      role:type,
-    });
+    let newRecord;
+
+    if (type === "admin") {
+      newRecord = await Admin.create({
+        name,
+        email,
+        password: hashedPassword,
+        role: "admin",
+        company: inviter.company, 
+      });
+      await Company.findByIdAndUpdate(inviter.company, { $addToSet: { admins: newRecord._id } });
+    } else if (type === "salesperson") {
+      newRecord = await User.create({
+        name,
+        email,
+        password: hashedPassword,
+        role: "salesperson",
+        company: inviter.company, 
+      });
+
+      await Company.findByIdAndUpdate(inviter.company, { $addToSet: { users: newRecord._id } });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid type. Must be 'admin' or 'salesperson'",
+      });
+    }
 
     await sendEmail(email, name, plainPassword, type);
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-      message: "User invited successfully",
-      user: {
-        id: newUser._id,
-        name: newUser.name,
-        email: newUser.email,
-        type: newUser.type,
+      message: `${type} invited successfully`,
+      data: {
+        id: newRecord._id,
+        name: newRecord.name,
+        email: newRecord.email,
+        role: type,
       },
     });
-
   } catch (err) {
     console.error("Invite user error:", err);
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
   }
 };
