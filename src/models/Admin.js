@@ -6,18 +6,23 @@ const adminSchema = new mongoose.Schema(
     email: { type: String, unique: true, sparse: true },
     name: { type: String },
     password: { type: String },
-    role: { 
-      type: String, 
-      enum: ["superadmin", "admin"], 
-      default: "admin" 
+    role: {
+      type: String,
+      enum: ["superadmin", "admin"],
+      default: "admin",
     },
-    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" }
+    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
+
+    hubspotId: { type: String, unique: true, sparse: true },
+    zohoId: { type: String, unique: true, sparse: true },
+    hubspotToken: { type: String },
+    zohoToken: { type: String },
   },
   { timestamps: true }
 );
 
 adminSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
+  if (!this.password || !this.isModified("password")) return next();
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();

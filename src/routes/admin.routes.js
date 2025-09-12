@@ -6,7 +6,7 @@ import { deleteUser, editUserRole, inviteUser } from '../controller/main.control
 const adminRouter = express.Router();
 
 adminRouter.post('/edit-role',protect,adminOnly,editUserRole)
-adminRouter.delete('/delete-user/:id',protect,adminOnly,deleteUser)
+adminRouter.delete('/delete-user/:id/:role',protect,adminOnly,deleteUser)
 adminRouter.post('/invite-user',protect,adminOnly,inviteUser)
 
 export default adminRouter;

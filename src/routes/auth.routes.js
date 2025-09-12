@@ -1,6 +1,6 @@
 import express from "express";
 import { adminEmailSignUp, checkLinkedinAuth, createInvite, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
-import { protect } from "../middleware/auth.middleware.js";
+import { adminOnly, protect } from "../middleware/auth.middleware.js";
 import User from "../models/User.js";
 import SlackWorkspace from "../models/SlackWorkspace.js";
 import Admin from "../models/Admin.js";
@@ -11,8 +11,8 @@ router.post("/signup", emailSignUp);
 //router.post("/admin-signup", adminEmailSignUp);
 router.post("/login", emailLogin);
 
-router.post("/promote-user", promoteUser);
-router.post("/demote-user", demoteUser);
+router.post("/promote-user",protect,adminOnly, promoteUser);
+router.post("/demote-user",protect,adminOnly, demoteUser);
 
 
 router.post("/create-invite",protect, createInvite);

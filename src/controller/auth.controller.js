@@ -178,6 +178,7 @@ export const emailLogin = async (req, res) => {
     }
 
     const isMatch = await account.comparePassword(password);
+
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
@@ -204,22 +205,26 @@ export const emailLogin = async (req, res) => {
 
 export const promoteUser = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { userId } = req.body;
 
     if (req.user.role !== "superadmin") {
       return res
         .status(403)
         .json({ message: "Only superadmin can promote users" });
     }
+
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const newAdmin = await Admin.create({
       email: user.email,
       name: user.name,
-      password: user.password,
-      role: "admin",
-      company: req.user.company,
+      password: user.password || undefined,
+      company: user.company,
+      zohoId: user.zohoId || undefined,
+      zohoToken: user.zohoToken || undefined,
+      hubspotId: user.hubspotId || undefined,
+      hubspotToken: user.hubspotToken || undefined,
     });
 
     await user.deleteOne();
@@ -232,7 +237,7 @@ export const promoteUser = async (req, res) => {
 
 export const demoteUser = async (req, res) => {
   try {
-    const { userId } = req.params;
+    const { userId } = req.body;
 
     if (req.user.role !== "superadmin") {
       return res
@@ -240,15 +245,19 @@ export const demoteUser = async (req, res) => {
         .json({ message: "Only superadmin can demote admins" });
     }
 
-    // find admin
     const admin = await Admin.findById(userId);
     if (!admin) return res.status(404).json({ message: "Admin not found" });
+
     const newUser = await User.create({
       email: admin.email,
       name: admin.name,
-      password: admin.password,
-      role: "user",
+      password: admin.password || undefined,
+      role: "salesperson",
       company: admin.company,
+      zohoId: admin.zohoId || undefined,
+      zohoToken: admin.zohoToken || undefined,
+      hubspotId: admin.hubspotId || undefined,
+      hubspotToken: admin.hubspotToken || undefined,
     });
 
     await admin.deleteOne();
@@ -274,7 +283,7 @@ export const hubspotcallback = async (req, res) => {
     const { code, state } = req.query;
     const hubspotClient = new Client();
 
-    // Exchange code for access token
+    // Exchange code for token
     const response = await hubspotClient.oauth.tokensApi.create(
       "authorization_code",
       code,
@@ -316,18 +325,17 @@ export const hubspotcallback = async (req, res) => {
       }
     }
 
+    // 🔍 Check in User first
     let user = await User.findOne({ hubspotId });
+    let admin = null;
 
     if (!user) {
-      user = await User.create({
-        hubspotId,
-        email,
-        name: fullName || email,
-        admin: adminId,
-        company,
-        hubspotToken: accessToken,
-      });
-    } else {
+      // 🔍 If not found in User, check Admin
+      admin = await Admin.findOne({ hubspotId });
+    }
+
+    if (user) {
+      // Update User
       user.email = user.email || email;
       user.name = user.name || fullName || email;
       user.hubspotToken = accessToken;
@@ -336,22 +344,47 @@ export const hubspotcallback = async (req, res) => {
       if (company && !user.company) user.company = company;
 
       await user.save();
-    }
+    } else if (admin) {
+      // Update Admin
+      admin.email = admin.email || email;
+      admin.name = admin.name || fullName || email;
+      admin.hubspotToken = accessToken;
 
-    if (invite?.company) {
-      await Company.findByIdAndUpdate(invite.company, {
-        $addToSet: { users: user._id },
+      if (company && !admin.company) admin.company = company;
+
+      await admin.save();
+    } else {
+      // Create fresh User
+      user = await User.create({
+        hubspotId,
+        email,
+        name: fullName || email,
+        admin: adminId,
+        company,
+        hubspotToken: accessToken,
       });
     }
 
-    const token = generateToken(user);
+    // Link company to user/admin
+    if (invite?.company) {
+      await Company.findByIdAndUpdate(invite.company, {
+        $addToSet: { users: user?._id || admin?._id },
+      });
+    }
 
-    res.redirect(`${Frontend_url}/setup?token=${token}`);
+    const token = generateToken(user || admin);
+
+    res.redirect(
+      `${Frontend_url}/setup?token=${token}&role=${
+        user ? user.role : admin.role
+      }`
+    );
   } catch (err) {
     console.error("HubSpot OAuth error:", err.response?.data || err.message);
     res.status(500).json({ message: err.response?.data || err.message });
   }
 };
+
 export const zohoAuth = async (req, res) => {
   const { token } = req.query;
   const scope = "aaaserver.profile.READ";
@@ -374,6 +407,7 @@ export const zohoCallback = async (req, res) => {
     const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI;
     const FRONTEND_URL = Frontend_url;
 
+    // 🔑 Exchange code for access token
     const tokenResponse = await axios.post(
       "https://accounts.zoho.com/oauth/v2/token",
       null,
@@ -390,6 +424,7 @@ export const zohoCallback = async (req, res) => {
 
     const accessToken = tokenResponse.data.access_token;
 
+    // 👤 Fetch user info from Zoho
     const userResponse = await axios.get(
       "https://accounts.zoho.com/oauth/user/info",
       {
@@ -399,6 +434,7 @@ export const zohoCallback = async (req, res) => {
 
     const zohoUser = userResponse.data;
 
+    // 🎯 Handle invite state
     let adminId, company, invite;
     if (state) {
       invite = await Invite.findOne({ token: state });
@@ -408,18 +444,17 @@ export const zohoCallback = async (req, res) => {
       }
     }
 
+    // 🔍 First try User
     let user = await User.findOne({ zohoId: zohoUser.ZUID });
+    let admin = null;
 
     if (!user) {
-      user = await User.create({
-        zohoId: zohoUser.ZUID,
-        email: zohoUser.Email,
-        name: zohoUser.Display_Name,
-        admin: adminId,
-        company,
-        zohoToken: accessToken,
-      });
-    } else {
+      // If not in User, check Admin
+      admin = await Admin.findOne({ zohoId: zohoUser.ZUID });
+    }
+
+    if (user) {
+      // Update User
       user.email = user.email || zohoUser.Email;
       user.name = user.name || zohoUser.Display_Name;
       user.zohoToken = accessToken;
@@ -428,17 +463,38 @@ export const zohoCallback = async (req, res) => {
       if (company && !user.company) user.company = company;
 
       await user.save();
-    }
+    } else if (admin) {
+      // Update Admin
+      admin.email = admin.email || zohoUser.Email;
+      admin.name = admin.name || zohoUser.Display_Name;
+      admin.zohoToken = accessToken;
 
-    if (invite?.company) {
-      await Company.findByIdAndUpdate(invite.company, {
-        $addToSet: { users: user._id },
+      if (company && !admin.company) admin.company = company;
+
+      await admin.save();
+    } else {
+      // Create fresh User
+      user = await User.create({
+        zohoId: zohoUser.ZUID,
+        email: zohoUser.Email,
+        name: zohoUser.Display_Name,
+        admin: adminId,
+        company,
+        zohoToken: accessToken,
       });
     }
 
-    const token = generateToken(user);
+    // 📌 Link user/admin to company
+    if (invite?.company) {
+      await Company.findByIdAndUpdate(invite.company, {
+        $addToSet: { users: user?._id || admin?._id },
+      });
+    }
 
-    res.redirect(`${FRONTEND_URL}/setup?token=${token}`);
+    // 🎟️ Generate JWT
+    const token = generateToken(user || admin);
+
+    res.redirect(`${FRONTEND_URL}/setup?token=${token}&role=${user ? user.role : admin.role}`);
   } catch (err) {
     console.error("Zoho OAuth error:", err.response?.data || err.message);
     res.status(500).json({ message: err.response?.data || err.message });

@@ -20,9 +20,9 @@ export const protect = async (req, res, next) => {
 
     let account;
     if (decoded.role === "admin" || decoded.role === "superadmin") {
-      account = await Admin.findById(decoded.id).select("-password");
+      account = await Admin.findById(decoded.id)
     } else {
-      account = await User.findById(decoded.id).select("-password");
+      account = await User.findById(decoded.id)
     }
 
     if (!account) {

@@ -13,6 +13,6 @@ export async function sendEmail(email, name, password,type) {
     from: `"Admin" <${process.env.EMAIL_USER}>`,
     to: email,
     subject: `Your ${type==="admin"?"Admin" : "Salesperson"} Account Credentials`,
-    text: `Hello ${name},\n\nYour ${type==="admin"?"admin" : "Salesperson"} account has been created.\n\nEmail: ${email}\nPassword: ${password}\n\nPlease log in and change your password.`,
+    text: `Hello ${name},\n\nYour ${type==="admin"?"admin" : "Salesperson"} account has been created.\n\nEmail: ${email}\nPassword: ${password}\n\nPlease log in with these credentials.`,
   });
 }

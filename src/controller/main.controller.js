@@ -102,13 +102,21 @@ export const editUserRole = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id,role } = req.params;
 
-    if (!id) {
-      return res.status(400).json({ message: "User ID is required" });
+    if (!id || !role) {
+      return res.status(400).json({ message: "User ID and role are required" });
     }
 
-    const deletedUser = await User.findByIdAndDelete(id);
+    let deletedUser;
+
+    if (role === "salesperson") {
+      deletedUser = await User.findByIdAndDelete(id);
+    } else if (role === "admin") {
+      deletedUser = await Admin.findByIdAndDelete(id);
+    } else {
+      return res.status(400).json({ message: "Invalid role" });
+    }
 
     if (!deletedUser) {
       return res.status(404).json({ message: "User not found" });
@@ -144,7 +152,7 @@ export const inviteUser = async (req, res) => {
     }
 
     const plainPassword = crypto.randomBytes(6).toString("hex");
-    const hashedPassword = await bcrypt.hash(plainPassword, 10);
+    const hashedPassword = plainPassword;
 
     let newRecord;
 

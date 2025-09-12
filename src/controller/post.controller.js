@@ -213,7 +213,8 @@ export const getAllUsers = async (req, res) => {
   try {
     const users = await User.find({ company: req.user.company });
     const admin = await Admin.findById(req.user._id);
-    const allUsers = [admin, ...users];
+    const admins = await Admin.find({company:admin.company})
+    const allUsers = [...admins, ...users];
     res.json(allUsers);
   } catch (err) {
     res.status(500).json({ message: err.message });
