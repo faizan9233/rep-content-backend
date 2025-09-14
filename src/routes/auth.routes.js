@@ -1,5 +1,5 @@
 import express from "express";
-import { adminEmailSignUp, checkLinkedinAuth, createInvite, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
+import { checkLinkedinAuth, createInvite, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
 import { adminOnly, protect } from "../middleware/auth.middleware.js";
 import User from "../models/User.js";
 import SlackWorkspace from "../models/SlackWorkspace.js";

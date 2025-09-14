@@ -503,6 +503,8 @@ export const zohoCallback = async (req, res) => {
 
 export const linkedinAuth = async (req, res) => {
   const userEmail = req.query.us;
+  const userRole = req.query.role; 
+
   const authUrl =
     "https://www.linkedin.com/oauth/v2/authorization?" +
     querystring.stringify({
@@ -510,16 +512,16 @@ export const linkedinAuth = async (req, res) => {
       client_id: process.env.LINKEDIN_CLIENT_ID,
       redirect_uri: process.env.LINKEDIN_REDIRECT_URI,
       scope: "openid profile w_member_social email",
-      state: userEmail,
+      state: JSON.stringify({ email: userEmail, role: userRole }),
     });
 
   res.redirect(authUrl);
 };
 
-export const linkedinCallback = async (req, res) => {
+ export const linkedinCallback = async (req, res) => {
   try {
     const { code, state } = req.query;
-    const userEmail = state;
+    const { email: userEmail, role: userRole } = JSON.parse(state);
 
     const tokenRes = await axios.post(
       "https://www.linkedin.com/oauth/v2/accessToken",
@@ -544,9 +546,16 @@ export const linkedinCallback = async (req, res) => {
 
     const linkedinId = userInfoRes.data.sub;
     const linkedinName = userInfoRes.data.name;
-    const user = await User.findOne({ email: userEmail });
+
+    let user;
+    if (userRole === "admin" || userRole === "superadmin") {
+      user = await Admin.findOne({ email: userEmail });
+    } else {
+      user = await User.findOne({ email: userEmail});
+    }
+
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({ message: "User not found or role mismatch" });
     }
 
     user.linkedinId = linkedinId;
@@ -555,15 +564,14 @@ export const linkedinCallback = async (req, res) => {
     user.linkedinProfilePic = userInfoRes.data.picture;
     await user.save();
 
-    res.redirect(`${Frontend_url}/dashboard/content?linkAuth=${true}}`);
+    let redirectUrl = userRole === "admin" || userRole === "superadmin" ? `admin-dashboard/sharing?linkAuth=${true}` : `dashboard/content?linkAuth=${true}`
+    res.redirect(`${Frontend_url}/${redirectUrl}`);
   } catch (err) {
-    console.error(
-      "LinkedIn callback error:",
-      err.response?.data || err.message
-    );
+    console.error("LinkedIn callback error:", err.response?.data || err.message);
     res.redirect(`${Frontend_url}/dashboard/content`);
   }
 };
+
 
 export const checkLinkedinAuth = async (req, res) => {
   try {

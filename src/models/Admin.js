@@ -17,6 +17,12 @@ const adminSchema = new mongoose.Schema(
     zohoId: { type: String, unique: true, sparse: true },
     hubspotToken: { type: String },
     zohoToken: { type: String },
+
+    linkedinId: { type: String, unique: true, sparse: true },
+    linkedinName: { type: String },
+    linkedinToken: { type: String },
+    linkedinRefreshToken: { type: String },
+    linkedinProfilePic: { type: String },
   },
   { timestamps: true }
 );
