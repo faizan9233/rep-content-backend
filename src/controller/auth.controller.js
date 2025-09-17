@@ -9,6 +9,7 @@ import SlackWorkspace from "../models/SlackWorkspace.js";
 import Admin from "../models/Admin.js";
 import Invite from "../models/Invite.js";
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
 import Company from "../models/Company.js";
 dotenv.config();
 
@@ -22,17 +23,55 @@ const generateToken = (user) => {
   );
 };
 
+export const changeUserPassword = async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.user._id;
+
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ message: "Both old and new passwords are required" });
+    }
+
+    let user = await User.findById(userId);
+    if (!user) {
+      user = await Admin.findById(userId);
+    }
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+    if (isSamePassword) {
+      return res.status(400).json({ message: "New password cannot be the same as current password" });
+    }
+
+   
+    user.password = newPassword
+    await user.save();
+
+    res.status(200).json({ success: true, message: "Password updated successfully" });
+  } catch (err) {
+    console.error("Error changing password:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
 export const createSuperAdmin = async (req, res) => {
   try {
     const { name, email, password, companyName } = req.body;
 
-    // Check if superadmin already exists
     const existingSuperAdmin = await Admin.findOne({ role: "superadmin" });
     if (existingSuperAdmin) {
       return res.status(400).json({ message: "Superadmin already exists" });
     }
 
-    // Create superadmin
     const superadmin = await Admin.create({
       name,
       email,
@@ -40,7 +79,6 @@ export const createSuperAdmin = async (req, res) => {
       role: "superadmin",
     });
 
-    // Create company and link superadmin as owner
     const company = await Company.create({
       name: companyName,
       owner: superadmin._id,
@@ -48,7 +86,6 @@ export const createSuperAdmin = async (req, res) => {
       users: [],
     });
 
-    // Link company to superadmin
     superadmin.company = company._id;
     await superadmin.save();
 
@@ -283,7 +320,6 @@ export const hubspotcallback = async (req, res) => {
     const { code, state } = req.query;
     const hubspotClient = new Client();
 
-    // Exchange code for token
     const response = await hubspotClient.oauth.tokensApi.create(
       "authorization_code",
       code,
@@ -294,7 +330,6 @@ export const hubspotcallback = async (req, res) => {
 
     const { accessToken } = response;
 
-    // Fetch user info
     const userInfo = await hubspotClient.apiRequest({
       method: "GET",
       path: `/oauth/v1/access-tokens/${accessToken}`,
@@ -305,7 +340,6 @@ export const hubspotcallback = async (req, res) => {
     const email = data.user;
     const userId = data.user_id;
 
-    // Fetch owner info for name
     const ownerInfo = await hubspotClient.apiRequest({
       method: "GET",
       path: `/crm/v3/owners/${userId}`,
@@ -335,7 +369,6 @@ export const hubspotcallback = async (req, res) => {
     }
 
     if (user) {
-      // Update User
       user.email = user.email || email;
       user.name = user.name || fullName || email;
       user.hubspotToken = accessToken;
@@ -345,7 +378,6 @@ export const hubspotcallback = async (req, res) => {
 
       await user.save();
     } else if (admin) {
-      // Update Admin
       admin.email = admin.email || email;
       admin.name = admin.name || fullName || email;
       admin.hubspotToken = accessToken;
@@ -354,7 +386,6 @@ export const hubspotcallback = async (req, res) => {
 
       await admin.save();
     } else {
-      // Create fresh User
       user = await User.create({
         hubspotId,
         email,
@@ -365,7 +396,6 @@ export const hubspotcallback = async (req, res) => {
       });
     }
 
-    // Link company to user/admin
     if (invite?.company) {
       await Company.findByIdAndUpdate(invite.company, {
         $addToSet: { users: user?._id || admin?._id },
@@ -407,7 +437,6 @@ export const zohoCallback = async (req, res) => {
     const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI;
     const FRONTEND_URL = Frontend_url;
 
-    // 🔑 Exchange code for access token
     const tokenResponse = await axios.post(
       "https://accounts.zoho.com/oauth/v2/token",
       null,
@@ -424,7 +453,6 @@ export const zohoCallback = async (req, res) => {
 
     const accessToken = tokenResponse.data.access_token;
 
-    // 👤 Fetch user info from Zoho
     const userResponse = await axios.get(
       "https://accounts.zoho.com/oauth/user/info",
       {
@@ -444,7 +472,6 @@ export const zohoCallback = async (req, res) => {
       }
     }
 
-    // 🔍 First try User
     let user = await User.findOne({ zohoId: zohoUser.ZUID });
     let admin = null;
 
@@ -484,14 +511,12 @@ export const zohoCallback = async (req, res) => {
       });
     }
 
-    // 📌 Link user/admin to company
     if (invite?.company) {
       await Company.findByIdAndUpdate(invite.company, {
         $addToSet: { users: user?._id || admin?._id },
       });
     }
 
-    // 🎟️ Generate JWT
     const token = generateToken(user || admin);
 
     res.redirect(`${FRONTEND_URL}/setup?token=${token}&role=${user ? user.role : admin.role}`);

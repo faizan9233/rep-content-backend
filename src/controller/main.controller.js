@@ -3,19 +3,18 @@ import Post from "../models/Post.js";
 import User from "../models/User.js";
 import crypto from "crypto";
 import { sendEmail } from "../utils/send-mail.js";
-import bcrypt from "bcryptjs";
 import Admin from "../models/Admin.js";
 import Company from "../models/Company.js";
-
 
 export const shareOnLinkedIn = async (req, res) => {
   try {
     const { postId } = req.params;
-    const user = req.user; 
+    const user = req.user;
     const post = await Post.findById(postId);
 
     if (!post) return res.status(404).json({ message: "Post not found" });
-    if (!user.linkedInToken) return res.status(400).json({ message: "LinkedIn not connected" });
+    if (!user.linkedInToken)
+      return res.status(400).json({ message: "LinkedIn not connected" });
 
     const linkedinPayload = {
       author: `urn:li:person:${user.linkedInId}`,
@@ -23,10 +22,12 @@ export const shareOnLinkedIn = async (req, res) => {
       visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
       specificContent: {
         "com.linkedin.ugc.ShareContent": {
-          shareCommentary: { text: `${post.title}\n\n${post.content}\n${post.url || ""}` },
+          shareCommentary: {
+            text: `${post.title}\n\n${post.content}\n${post.url || ""}`,
+          },
           shareMediaCategory: post.picture ? "IMAGE" : "NONE",
-        }
-      }
+        },
+      },
     };
 
     if (post.picture) {
@@ -35,8 +36,8 @@ export const shareOnLinkedIn = async (req, res) => {
           status: "READY",
           description: { text: post.title },
           originalUrl: post.picture,
-          title: { text: post.title }
-        }
+          title: { text: post.title },
+        },
       ];
     }
 
@@ -44,11 +45,10 @@ export const shareOnLinkedIn = async (req, res) => {
       headers: {
         Authorization: `Bearer ${user.linkedInToken}`,
         "X-Restli-Protocol-Version": "2.0.0",
-        "Content-Type": "application/json"
-      }
+        "Content-Type": "application/json",
+      },
     });
 
-    // Mark post as shared by user
     if (!post.shares.includes(user._id)) {
       post.shares.push(user._id);
       await post.save();
@@ -61,8 +61,7 @@ export const shareOnLinkedIn = async (req, res) => {
   }
 };
 
-
-export const ShareL = async(req,res)=>{
+export const ShareL = async (req, res) => {
   const post = await Post.findById(req.params.postId);
   if (!post) return res.status(404).send("Post not found");
 
@@ -75,26 +74,26 @@ export const ShareL = async(req,res)=>{
       <title>${post.title}</title>
       <meta property="og:title" content="${post.title}" />
       <meta property="og:description" content="${post.content}" />
-      <meta property="og:image" content="${post.picture || ''}" />
+      <meta property="og:image" content="${post.picture || ""}" />
       <meta property="og:url" content="${pageUrl}" />
     </head>
     <body>
       <h1>${post.title}</h1>
       <p>${post.content}</p>
-      ${post.picture ? `<img src="${post.picture}" />` : ''}
+      ${post.picture ? `<img src="${post.picture}" />` : ""}
     </body>
     </html>
   `);
-}
+};
 
 export const editUserRole = async (req, res) => {
   try {
-    const { id,role } = req.body;
+    const { id, role } = req.body;
 
     const existingUser = await User.findById(id);
     existingUser.role = role;
     await existingUser.save();
-    res.status(201).json({ user:existingUser });
+    res.status(201).json({ user: existingUser });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -102,7 +101,7 @@ export const editUserRole = async (req, res) => {
 
 export const deleteUser = async (req, res) => {
   try {
-    const { id,role } = req.params;
+    const { id, role } = req.params;
 
     if (!id || !role) {
       return res.status(400).json({ message: "User ID and role are required" });
@@ -132,7 +131,7 @@ export const deleteUser = async (req, res) => {
 export const inviteUser = async (req, res) => {
   try {
     const { name, email, type } = req.body;
-    const inviter = req.user; 
+    const inviter = req.user;
 
     if (!name || !email || !type) {
       return res.status(400).json({
@@ -157,24 +156,29 @@ export const inviteUser = async (req, res) => {
     let newRecord;
 
     if (type === "admin") {
-      newRecord = await Admin.create({
+      newRecord = new Admin({
         name,
         email,
-        password: hashedPassword,
+        password: plainPassword,
         role: "admin",
-        company: inviter.company, 
+        company: inviter.company,
       });
-      await Company.findByIdAndUpdate(inviter.company, { $addToSet: { admins: newRecord._id } });
+      await newRecord.save();
+      await Company.findByIdAndUpdate(inviter.company, {
+        $addToSet: { admins: newRecord._id },
+      });
     } else if (type === "salesperson") {
-      newRecord = await User.create({
+      newRecord = new User({
         name,
         email,
-        password: hashedPassword,
+        password: plainPassword,
         role: "salesperson",
-        company: inviter.company, 
+        company: inviter.company,
       });
-
-      await Company.findByIdAndUpdate(inviter.company, { $addToSet: { users: newRecord._id } });
+      await newRecord.save();
+      await Company.findByIdAndUpdate(inviter.company, {
+        $addToSet: { users: newRecord._id },
+      });
     } else {
       return res.status(400).json({
         success: false,

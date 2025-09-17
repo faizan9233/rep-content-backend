@@ -18,7 +18,6 @@ export const getSlackUsers = async (accessToken) => {
         !member.is_bot &&
         member.id !== "USLACKBOT" &&
         !member.deleted
-        //  && member.profile.email === "faizan@wintactix.com"
     );
   } catch (err) {
     console.error("Error fetching Slack users:", err.message);

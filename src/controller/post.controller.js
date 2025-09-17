@@ -8,6 +8,7 @@ import mongoose from "mongoose";
 import https from "https";
 import { Parser } from "htmlparser2";
 import Admin from "../models/Admin.js";
+import puppeteer from "puppeteer";
 
 export const createPost = async (req, res) => {
   try {
@@ -67,7 +68,7 @@ export const createPost = async (req, res) => {
       description,
       media: mediaArr,
       createdBy,
-      company:req.user.company
+      company: req.user.company,
     });
 
     await newPost.save();
@@ -85,7 +86,7 @@ export const createPost = async (req, res) => {
 
 export const createLinkPost = async (req, res) => {
   try {
-    const { title, postLink, description, image } = req.body;
+    const { title, postLink, description, image, video } = req.body;
 
     if (!title || !postLink) {
       return res
@@ -101,20 +102,21 @@ export const createLinkPost = async (req, res) => {
       });
     }
 
+    const media = [];
+    if (image) {
+      media.push({ url: image, type: "Image" });
+    }
+    if (video) {
+      media.push({ url: video, type: "Video" });
+    }
+
     const newPost = new Post({
       title,
       postLink,
       description,
-      media: image
-        ? [
-            {
-              url: image,
-              type: "Image",
-            },
-          ]
-        : [],
+      media,
       createdBy: req.user._id,
-      company:req.user.company
+      company: req.user.company,
     });
 
     await newPost.save();
@@ -126,73 +128,40 @@ export const createLinkPost = async (req, res) => {
   }
 };
 
-export const getLinkedInPostDetails = (req, res) => {
+
+export const getLinkedInPostDetails = async (req, res) => {
   const { url } = req.body;
 
-  const linkedinRegex =
-    /^https?:\/\/(www\.)?linkedin\.com\/posts\/[a-zA-Z0-9_-]+/;
-  if (!url || !linkedinRegex.test(url)) {
+  if (!url || !/^https:\/\/(www\.)?linkedin\.com\/posts\//.test(url)) {
     return res.status(400).json({ message: "Invalid LinkedIn post URL" });
   }
 
-  https
-    .get(
-      url,
-      {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-        },
-      },
-      (response) => {
-        let html = "";
+  try {
+    const browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle2" });
 
-        response.on("data", (chunk) => (html += chunk));
-        response.on("end", () => {
-          try {
-            let title = null;
-            let description = null;
-            let image = null;
-            let urlCanonical = url;
+    const data = await page.evaluate(() => {
+      const title =
+        document.querySelector("meta[property='og:title']")?.content || null;
+      const description =
+        document.querySelector("meta[property='og:description']")?.content ||
+        null;
+      const image =
+        document.querySelector("meta[property='og:image']")?.content || null;
+      const video =
+        document.querySelector("meta[property='og:video']")?.content || null;
 
-            const parser = new Parser(
-              {
-                onopentag(name, attribs) {
-                  if (name === "meta") {
-                    if (attribs.property === "og:title")
-                      title = attribs.content;
-                    if (attribs.property === "og:description")
-                      description = attribs.content;
-                    if (attribs.property === "og:image")
-                      image = attribs.content;
-                    if (attribs.property === "og:url")
-                      urlCanonical = attribs.content;
-                  }
-                },
-              },
-              { decodeEntities: true }
-            );
-
-            parser.write(html);
-            parser.end();
-
-            res.json({ title, description, image, url: urlCanonical });
-          } catch (err) {
-            console.error(err);
-            res.status(500).json({
-              message: "Failed to parse LinkedIn post HTML",
-              error: err.message,
-            });
-          }
-        });
-      }
-    )
-    .on("error", (err) => {
-      console.error(err);
-      res
-        .status(500)
-        .json({ message: "Failed to fetch LinkedIn post", error: err.message });
+      return { title, description, image, video };
     });
+
+    await browser.close();
+    res.json(data);
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Failed to fetch LinkedIn post", error: err.message });
+  }
 };
 
 export const getAllPosts = async (req, res) => {
@@ -203,7 +172,6 @@ export const getAllPosts = async (req, res) => {
       .populate("likes", "name email")
       .populate("shares", "name email linkedinProfilePic")
       .populate("repost", "name email");
-
     res.json(posts);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -213,7 +181,7 @@ export const getAllUsers = async (req, res) => {
   try {
     const users = await User.find({ company: req.user.company });
     const admin = await Admin.findById(req.user._id);
-    const admins = await Admin.find({company:admin.company})
+    const admins = await Admin.find({ company: admin.company });
     const allUsers = [...admins, ...users];
     res.json(allUsers);
   } catch (err) {
@@ -371,20 +339,6 @@ export const deletePost = async (req, res) => {
   }
 };
 
-// export const likePost = async (req, res) => {
-//   try {
-//     const post = await Post.findById(req.params.id);
-//     if (!post) return res.status(404).json({ message: "Post not found" });
-
-//     if (!post.likes.includes(req.user._id)) post.likes.push(req.user._id);
-//     await post.save();
-
-//     res.json({ message: "Post liked", likes: post.likes.length });
-//   } catch (err) {
-//     res.status(500).json({ message: err.message });
-//   }
-// };
-
 export const sharePost = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -420,7 +374,6 @@ const pushShare = async (postId, userId) => {
 
 async function postToLinkedIn(accessToken, post, userId) {
   try {
-    // Step 1: Get LinkedIn profile to obtain personId
     const profileResponse = await axios.get(
       "https://api.linkedin.com/v2/userinfo",
       {
@@ -438,7 +391,6 @@ async function postToLinkedIn(accessToken, post, userId) {
 
     let mediaUrn = null;
 
-    // Step 2: If post has media, upload first
     if (post.media && post.media.length > 0) {
       const firstMedia = post.media[0];
       if (firstMedia.type === "Image") {
@@ -488,7 +440,6 @@ async function postToLinkedIn(accessToken, post, userId) {
       }
     }
 
-    // Step 3: Prepare body
     const postBody = {
       author: `urn:li:person:${personId}`,
       lifecycleState: "PUBLISHED",
@@ -507,7 +458,6 @@ async function postToLinkedIn(accessToken, post, userId) {
     };
 
     if (mediaUrn) {
-      // Image case
       postBody.specificContent["com.linkedin.ugc.ShareContent"].media.push({
         status: "READY",
         media: mediaUrn,
@@ -706,11 +656,6 @@ export const likePost = async (req, res) => {
     const { postId, linkedinPostId } = req.body;
     const user = req.user;
 
-    // if (!user.linkedinToken || !linkedinPostId) {
-    //   return res
-    //     .status(400)
-    //     .json({ message: "LinkedIn token and post ID required" });
-    // }
     await pushLike(postId, user._id);
     res.status(200).json({ message: "Post liked successfully" });
   } catch (error) {
@@ -724,12 +669,6 @@ export const repostPost = async (req, res) => {
   try {
     const { postId, linkedinPostId, message } = req.body;
     const user = req.user;
-
-    // if (!user.linkedinToken || !linkedinPostId) {
-    //   return res
-    //     .status(400)
-    //     .json({ message: "LinkedIn token and post ID required" });
-    // }
 
     await pushRepost(postId, user._id);
 

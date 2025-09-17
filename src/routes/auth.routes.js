@@ -1,5 +1,5 @@
 import express from "express";
-import { checkLinkedinAuth, createInvite, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
+import { changeUserPassword, checkLinkedinAuth, createInvite, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
 import { adminOnly, protect } from "../middleware/auth.middleware.js";
 import User from "../models/User.js";
 import SlackWorkspace from "../models/SlackWorkspace.js";
@@ -10,6 +10,7 @@ const router = express.Router();
 router.post("/signup", emailSignUp);
 //router.post("/admin-signup", adminEmailSignUp);
 router.post("/login", emailLogin);
+router.post("/change-user-password",protect, changeUserPassword);
 
 router.post("/promote-user",protect,adminOnly, promoteUser);
 router.post("/demote-user",protect,adminOnly, demoteUser);
