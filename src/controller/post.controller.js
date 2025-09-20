@@ -139,12 +139,13 @@ export const getLinkedInPostDetails = async (req, res) => {
   }
 
   try {
-    // const browser = await puppeteer.launch({ headless: true });
     const browser = await puppeteer.launch({
       headless: true,
-      executablePath: puppeteer.executablePath(), // Use Puppeteer’s Chromium
+      executablePath: puppeteer.executablePath(), // ✅ forces Puppeteer to use its downloaded Chromium
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
+    const page = await browser.newPage();
     await page.goto(url, { waitUntil: "networkidle2" });
 
     const data = await page.evaluate(() => {
