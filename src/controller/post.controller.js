@@ -128,7 +128,6 @@ export const createLinkPost = async (req, res) => {
   }
 };
 
-
 export const getLinkedInPostDetails = async (req, res) => {
   const { url } = req.body;
 
@@ -140,8 +139,12 @@ export const getLinkedInPostDetails = async (req, res) => {
   }
 
   try {
-    const browser = await puppeteer.launch({ headless: true });
-    const page = await browser.newPage();
+    // const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({
+      headless: true,
+      executablePath: puppeteer.executablePath(), // Use Puppeteer’s Chromium
+    });
+
     await page.goto(url, { waitUntil: "networkidle2" });
 
     const data = await page.evaluate(() => {
