@@ -132,7 +132,10 @@ export const createLinkPost = async (req, res) => {
 export const getLinkedInPostDetails = async (req, res) => {
   const { url } = req.body;
 
-  if (!url || !/^https:\/\/(www\.)?linkedin\.com\/posts\//.test(url)) {
+  const validUrlPattern =
+    /^https:\/\/(www\.)?linkedin\.com\/(posts\/|feed\/update\/urn:li:activity:)/;
+
+  if (!url || !validUrlPattern.test(url)) {
     return res.status(400).json({ message: "Invalid LinkedIn post URL" });
   }
 
@@ -156,11 +159,16 @@ export const getLinkedInPostDetails = async (req, res) => {
     });
 
     await browser.close();
-    res.json(data);
+    res.json({
+      success: true,
+      url,
+      ...data,
+    });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch LinkedIn post", error: err.message });
+    res.status(500).json({
+      message: "Failed to fetch LinkedIn post",
+      error: err.message,
+    });
   }
 };
 
