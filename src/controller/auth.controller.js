@@ -68,9 +68,9 @@ export const createSuperAdmin = async (req, res) => {
     const { name, email, password, companyName } = req.body;
 
     const existingSuperAdmin = await Admin.findOne({ role: "superadmin" });
-    if (existingSuperAdmin) {
-      return res.status(400).json({ message: "Superadmin already exists" });
-    }
+    // if (existingSuperAdmin) {
+    //   return res.status(400).json({ message: "Superadmin already exists" });
+    // }
 
     const superadmin = await Admin.create({
       name,
