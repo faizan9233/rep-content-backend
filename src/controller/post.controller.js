@@ -8,7 +8,8 @@ import mongoose from "mongoose";
 import https from "https";
 import { Parser } from "htmlparser2";
 import Admin from "../models/Admin.js";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 
 export const createPost = async (req, res) => {
   try {
@@ -128,49 +129,47 @@ export const createLinkPost = async (req, res) => {
   }
 };
 
+let browser;
+
+export async function initBrowser() {
+  if (!browser) {
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+  }
+  return browser;
+}
+
 
 export const getLinkedInPostDetails = async (req, res) => {
   const { url } = req.body;
 
-  const validUrlPattern =
-    /^https:\/\/(www\.)?linkedin\.com\/(posts\/|feed\/update\/urn:li:activity:)/;
-
-  if (!url || !validUrlPattern.test(url)) {
-    return res.status(400).json({ message: "Invalid LinkedIn post URL" });
-  }
-
   try {
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await initBrowser();
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "networkidle2" });
+
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
 
     const data = await page.evaluate(() => {
-      const title =
-        document.querySelector("meta[property='og:title']")?.content || null;
-      const description =
-        document.querySelector("meta[property='og:description']")?.content ||
-        null;
-      const image =
-        document.querySelector("meta[property='og:image']")?.content || null;
-      const video =
-        document.querySelector("meta[property='og:video']")?.content || null;
-
+      const title = document.querySelector("meta[property='og:title']")?.content || null;
+      const description = document.querySelector("meta[property='og:description']")?.content || null;
+      const image = document.querySelector("meta[property='og:image']")?.content || null;
+      const video = document.querySelector("meta[property='og:video']")?.content || null;
       return { title, description, image, video };
     });
 
-    await browser.close();
-    res.json({
-      success: true,
-      url,
-      ...data,
-    });
+    await page.close(); // ✅ close tab but keep browser alive
+
+    res.json({ url, ...data });
   } catch (err) {
-    res.status(500).json({
-      message: "Failed to fetch LinkedIn post",
-      error: err.message,
-    });
+    console.error("Puppeteer error:", err);
+    res.status(500).json({ message: "Failed to fetch LinkedIn post", error: err.message });
   }
 };
+
 
 export const getAllPosts = async (req, res) => {
   try {

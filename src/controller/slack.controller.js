@@ -1,6 +1,8 @@
 import axios from "axios";
 import SlackWorkspace from "../models/SlackWorkspace.js";
 import Slackuserslist from "../models/Slackuserslist.js";
+import AutoBroadcast from "../models/AutoBroadcast.js";
+import cron from 'node-cron'
 
 export const getSlackUsers = async (accessToken) => {
   try {
@@ -211,3 +213,129 @@ export const deleteSlackUserList = async (req, res) => {
     res.status(500).json({ message: "Server error", error });
   }
 };
+
+export const createAutoBroadcast = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { message, users, weekdays, time } = req.body;
+
+    if (!message || !users?.length || !weekdays?.length || !time) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const workspace = await SlackWorkspace.findOne({ linkedUser: userId });
+    if (!workspace) {
+      return res.status(404).json({ message: "Workspace not found" });
+    }
+
+    const autoBroadcast = await AutoBroadcast.create({
+      linkedUser: userId,
+      workspace: workspace._id,
+      message,
+      users,
+      weekdays,
+      time,
+    });
+
+    res.json({ message: "Auto broadcast created", autoBroadcast });
+  } catch (err) {
+    console.error("Create AutoBroadcast Error:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const updateAutoBroadcast = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { id } = req.params; 
+    const { message, users, weekdays, time } = req.body;
+
+    const autoBroadcast = await AutoBroadcast.findOne({
+      _id: id,
+      linkedUser: userId,
+    });
+
+    if (!autoBroadcast) {
+      return res.status(404).json({ message: "Auto broadcast not found" });
+    }
+
+    // Update fields only if provided
+    if (message !== undefined) autoBroadcast.message = message;
+    if (Array.isArray(users)) autoBroadcast.users = users;
+    if (Array.isArray(weekdays)) autoBroadcast.weekdays = weekdays;
+    if (time !== undefined) autoBroadcast.time = time;
+    // if (isActive !== undefined) autoBroadcast.isActive = isActive;
+
+    await autoBroadcast.save();
+
+    res.json({ message: "Auto broadcast updated", autoBroadcast });
+  } catch (err) {
+    console.error("Update AutoBroadcast Error:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const toggleAutoBroadcast = async (req, res) => {
+  try {
+    const { id } = req.params; 
+
+    const autoBroadcast = await AutoBroadcast.findById(id)
+    if (!autoBroadcast) {
+      return res.status(404).json({ message: "Auto broadcast not found" });
+    }
+
+    autoBroadcast.isActive = !autoBroadcast.isActive
+    await autoBroadcast.save();
+    res.json({ message: "Auto broadcast updated", autoBroadcast });
+  } catch (err) {
+    console.error("Update AutoBroadcast Error:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getUserAutoBroadcasts = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const autoBroadcasts = await AutoBroadcast.find({ linkedUser: userId })
+      .populate("workspace", "name teamId");
+
+    res.json({ autoBroadcasts });
+  } catch (err) {
+    console.error("Get AutoBroadcasts Error:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+
+export function initAutoBroadcastCron() {
+  cron.schedule("* * * * *", async () => {
+    const now = new Date();
+    const currentDay = now.toLocaleString("en-US", { weekday: "long" }).toLowerCase();
+    const currentTime = now.toTimeString().slice(0, 5);
+
+    try {
+      const broadcasts = await AutoBroadcast.find({
+        isActive: true,
+        weekdays: currentDay,
+        time: currentTime,
+      }).populate("workspace");
+
+      for (const b of broadcasts) {
+        if (!b.workspace?.botToken) continue;
+
+        await broadcastMessageToWorkspace(
+          b.workspace.botToken,
+          b.message,
+          b.users
+        );
+
+        console.log(`✅ Auto broadcast sent: "${b.message}" to ${b.users.length} users`);
+      }
+    } catch (err) {
+      console.error("Cron job error:", err.message);
+    }
+  });
+
+  console.log("⏰ AutoBroadcast Cron initialized");
+}

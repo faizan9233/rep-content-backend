@@ -9,6 +9,7 @@ import router from "./routes/auth.routes.js";
 import postRouter from "./routes/post.routes.js";
 import adminRouter from "./routes/admin.routes.js";
 import slackRouter from "./routes/slack.routes.js";
+import { initAutoBroadcastCron } from "./controller/slack.controller.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +24,8 @@ export class App {
     this.initMiddleware();
     this.initDatabase();
     this.initRoutes();
+
+    initAutoBroadcastCron()
   }
 
   initMiddleware() {
