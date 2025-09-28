@@ -32,6 +32,7 @@ const AutoBroadcastSchema = new mongoose.Schema(
       type: String, 
       required: true,
     },
+    timezone: String,
     isActive: {
       type: Boolean,
       default: true,

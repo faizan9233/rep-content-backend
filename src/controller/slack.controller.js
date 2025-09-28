@@ -3,6 +3,7 @@ import SlackWorkspace from "../models/SlackWorkspace.js";
 import Slackuserslist from "../models/Slackuserslist.js";
 import AutoBroadcast from "../models/AutoBroadcast.js";
 import cron from 'node-cron'
+import moment from "moment-timezone";
 
 export const getSlackUsers = async (accessToken) => {
   try {
@@ -217,7 +218,7 @@ export const deleteSlackUserList = async (req, res) => {
 export const createAutoBroadcast = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { message, users, weekdays, time } = req.body;
+    const { message, users, weekdays, time,timezone } = req.body;
 
     if (!message || !users?.length || !weekdays?.length || !time) {
       return res.status(400).json({ message: "All fields are required" });
@@ -235,6 +236,7 @@ export const createAutoBroadcast = async (req, res) => {
       users,
       weekdays,
       time,
+      timezone
     });
 
     res.json({ message: "Auto broadcast created", autoBroadcast });
@@ -310,27 +312,32 @@ export const getUserAutoBroadcasts = async (req, res) => {
 
 export function initAutoBroadcastCron() {
   cron.schedule("* * * * *", async () => {
-    const now = new Date();
-    const currentDay = now.toLocaleString("en-US", { weekday: "long" }).toLowerCase();
-    const currentTime = now.toTimeString().slice(0, 5);
+    console.log("⏰ Cron tick at", new Date().toISOString());
 
     try {
-      const broadcasts = await AutoBroadcast.find({
-        isActive: true,
-        weekdays: currentDay,
-        time: currentTime,
-      }).populate("workspace");
+      const broadcasts = await AutoBroadcast.find({ isActive: true }).populate("workspace");
 
       for (const b of broadcasts) {
         if (!b.workspace?.botToken) continue;
 
-        await broadcastMessageToWorkspace(
-          b.workspace.botToken,
-          b.message,
-          b.users
-        );
+        const tz = b.timezone || "UTC";
+        const now = moment().tz(tz);
+        const currentDay = now.format("dddd").toLowerCase(); 
+        const currentTime = now.format("HH:mm");
 
-        console.log(`✅ Auto broadcast sent: "${b.message}" to ${b.users.length} users`);
+        if (
+          b.weekdays.includes(currentDay) &&
+          b.time === currentTime
+        ) {
+          await broadcastMessageToWorkspace(
+            b.workspace.botToken,
+            b.message,
+            b.users
+          );
+          console.log(
+            `✅ Auto broadcast sent: "${b.message}" to ${b.users.length} users [${tz}]`
+          );
+        }
       }
     } catch (err) {
       console.error("Cron job error:", err.message);

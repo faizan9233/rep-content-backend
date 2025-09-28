@@ -67,10 +67,10 @@ export const createSuperAdmin = async (req, res) => {
   try {
     const { name, email, password, companyName } = req.body;
 
-    const existingSuperAdmin = await Admin.findOne({ role: "superadmin" });
-    // if (existingSuperAdmin) {
-    //   return res.status(400).json({ message: "Superadmin already exists" });
-    // }
+    const existingSuperAdmin = await Admin.findOne({email});
+    if (existingSuperAdmin) {
+      return res.status(400).json({ message: "Superadmin already exists" });
+    }
 
     const superadmin = await Admin.create({
       name,
@@ -95,26 +95,20 @@ export const createSuperAdmin = async (req, res) => {
   }
 };
 
-export const createInvite = async (req, res) => {
+const createInvite = async (adminId,companyId) => {
   try {
     const token = crypto.randomBytes(20).toString("hex");
-    // Create invite linked to admin and admin's company
     const invite = await Invite.create({
       token,
-      admin: req.user._id,
-      company: req.user.company,
+      admin: adminId,
+      company: companyId,
     });
 
     const signupLink = `${Frontend_url}/signup?token=${token}`;
 
-    res.status(201).json({
-      success: true,
-      message: "Invite created successfully",
-      link: signupLink,
-    });
+   return invite;
   } catch (err) {
     console.error("Create invite error:", err);
-    res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -178,7 +172,7 @@ export const emailSignUp = async (req, res) => {
 
 export const adminEmailSignUp = async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name,companyName } = req.body;
     if (!email || !password)
       return res.status(400).json({ message: "Email & password required" });
 
@@ -186,7 +180,21 @@ export const adminEmailSignUp = async (req, res) => {
     if (existingUser)
       return res.status(400).json({ message: "Email already exists" });
 
-    const user = await Admin.create({ email, password, name });
+    const user = await Admin.create({ email, password, name, role: "superadmin" });
+
+    const company = await Company.create({
+      name: companyName,
+      owner: user._id,
+      admins: [user._id],
+      users: [],
+    });
+
+    user.company = company._id;
+
+    const invite = await createInvite(user._id, company._id)
+    user.invite = invite._id
+    await user.save();
+
     const token = generateToken(user);
     res.status(201).json({ user, token });
   } catch (err) {

@@ -1,5 +1,5 @@
 import express from "express";
-import { changeUserPassword, checkLinkedinAuth, createInvite, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
+import { adminEmailSignUp, changeUserPassword, checkLinkedinAuth, createSuperAdmin, demoteUser, emailLogin, emailSignUp, hubspotAuth, hubspotcallback, linkedinAuth, linkedinCallback, promoteUser, slackCallback, slackRedirect, zohoAuth, zohoCallback } from "../controller/auth.controller.js";
 import { adminOnly, protect } from "../middleware/auth.middleware.js";
 import User from "../models/User.js";
 import SlackWorkspace from "../models/SlackWorkspace.js";
@@ -8,7 +8,7 @@ import Admin from "../models/Admin.js";
 const router = express.Router();
 
 router.post("/signup", emailSignUp);
-//router.post("/admin-signup", adminEmailSignUp);
+router.post("/admin-signup", adminEmailSignUp);
 router.post("/login", emailLogin);
 router.post("/change-user-password",protect, changeUserPassword);
 
@@ -16,7 +16,6 @@ router.post("/promote-user",protect,adminOnly, promoteUser);
 router.post("/demote-user",protect,adminOnly, demoteUser);
 
 
-router.post("/create-invite",protect, createInvite);
 router.post("/create-superadmin", createSuperAdmin);
 
 router.get("/me", protect, async (req, res) => {
@@ -24,7 +23,7 @@ router.get("/me", protect, async (req, res) => {
     let account;
 
     if (req.user.role === "admin" || req.user.role === "superadmin") {
-      account = await Admin.findById(req.user.id).select("-password").populate("company", "name");
+      account = await Admin.findById(req.user.id).select("-password").populate("company", "name").populate("invite","token");
     } else {
       account = await User.findById(req.user.id).select("-password").populate("company", "name");;
     }

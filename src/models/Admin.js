@@ -12,6 +12,7 @@ const adminSchema = new mongoose.Schema(
       default: "admin",
     },
     company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
+    invite: { type: mongoose.Schema.Types.ObjectId, ref: "Invite" },
 
     hubspotId: { type: String, unique: true, sparse: true },
     zohoId: { type: String, unique: true, sparse: true },
