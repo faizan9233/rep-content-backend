@@ -10,6 +10,7 @@ import { Parser } from "htmlparser2";
 import Admin from "../models/Admin.js";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
+import UserPosts from "../models/UserPosts.js";
 
 export const createPost = async (req, res) => {
   try {
@@ -129,6 +130,50 @@ export const createLinkPost = async (req, res) => {
   }
 };
 
+export const createUserLinkPost = async (req, res) => {
+  try {
+    const { title, postLink, description, image, video } = req.body;
+
+    if (!title || !postLink) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Title and link are required" });
+    }
+
+    const existingPost = await UserPosts.findOne({ postLink });
+    if (existingPost) {
+      return res.status(409).json({
+        success: false,
+        message: "Post with this link already exists",
+      });
+    }
+
+    const media = [];
+    if (image) {
+      media.push({ url: image, type: "Image" });
+    }
+    if (video) {
+      media.push({ url: video, type: "Video" });
+    }
+
+    const newPost = new UserPosts({
+      title,
+      postLink,
+      description,
+      media,
+      createdBy: req.user._id,
+      company: req.user.company,
+    });
+
+    await newPost.save();
+
+    res.status(201).json({ success: true, data: newPost });
+  } catch (error) {
+    console.error("Error creating link post:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 let browser;
 
 export async function initBrowser() {
@@ -143,7 +188,6 @@ export async function initBrowser() {
   return browser;
 }
 
-
 export const getLinkedInPostDetails = async (req, res) => {
   const { url } = req.body;
 
@@ -154,10 +198,15 @@ export const getLinkedInPostDetails = async (req, res) => {
     await page.goto(url, { waitUntil: "networkidle2", timeout: 30000 });
 
     const data = await page.evaluate(() => {
-      const title = document.querySelector("meta[property='og:title']")?.content || null;
-      const description = document.querySelector("meta[property='og:description']")?.content || null;
-      const image = document.querySelector("meta[property='og:image']")?.content || null;
-      const video = document.querySelector("meta[property='og:video']")?.content || null;
+      const title =
+        document.querySelector("meta[property='og:title']")?.content || null;
+      const description =
+        document.querySelector("meta[property='og:description']")?.content ||
+        null;
+      const image =
+        document.querySelector("meta[property='og:image']")?.content || null;
+      const video =
+        document.querySelector("meta[property='og:video']")?.content || null;
       return { title, description, image, video };
     });
 
@@ -166,10 +215,11 @@ export const getLinkedInPostDetails = async (req, res) => {
     res.json({ url, ...data });
   } catch (err) {
     console.error("Puppeteer error:", err);
-    res.status(500).json({ message: "Failed to fetch LinkedIn post", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch LinkedIn post", error: err.message });
   }
 };
-
 
 export const getAllPosts = async (req, res) => {
   try {
@@ -184,6 +234,27 @@ export const getAllPosts = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+export const getAllUserPosts = async (req, res) => {
+  try {
+    const posts = await UserPosts.find({ createdBy: req.user._id }).sort({
+      createdAt: -1,
+    });
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getAllUserPostsForAdmin = async (req, res) => {
+  try {
+    const posts = await UserPosts.find({}).sort({ createdAt: -1 });
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 export const getAllUsers = async (req, res) => {
   try {
     const users = await User.find({ company: req.user.company });
@@ -345,6 +416,82 @@ export const deletePost = async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
+
+export const deleteUserPost = async (req, res) => {
+  try {
+    const { postId } = req.params;
+
+    if (!postId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Post ID is required" });
+    }
+
+    const post = await UserPosts.findById(postId);
+    if (!post) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Post not found" });
+    }
+
+    await post.deleteOne();
+
+    res.status(200).json({
+      success: true,
+      message: "Post deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete post error:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
+export const updateUserPostStatus = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { status } = req.body;
+
+    if (!postId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Post ID is required" });
+    }
+
+    const post = await UserPosts.findById(postId);
+    if (!post) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Post not found" });
+    }
+
+    post.isApproved = status;
+    await post.save();
+
+    if (status === "approved") {
+      const newPost = new Post({
+        title: post.title,
+        postLink: post.postLink,
+        description: post.description,
+        media: post.media,
+        createdBy: req.user._id,
+        company: req.user.company,
+      });
+
+      await newPost.save();
+
+      await post.deleteOne();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Post status updated successfully",
+    });
+  } catch (error) {
+    console.error("updateUserPostStatus error:", error);
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
+
 
 export const sharePost = async (req, res) => {
   try {
