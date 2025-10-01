@@ -11,6 +11,7 @@ import Invite from "../models/Invite.js";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import Company from "../models/Company.js";
+import { sendEmail } from "../utils/send-mail.js";
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
@@ -60,6 +61,66 @@ export const changeUserPassword = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+export const forgetPassword = async (req, res) => {
+ try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const resetToken = jwt.sign(
+      { id: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    const resetUrl = `${Frontend_url}/reset-password?token=${resetToken}`;
+
+    await sendEmail(
+      user.email,
+      user.name,
+      resetUrl,
+      "reset" 
+    );
+
+    return res.json({ success: true, message: "Password reset link sent to your email" });
+  } catch (err) {
+    console.error("Forget password error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+export const resetPassword = async(req,res)=>{
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: "Password is required" });
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const user = await User.findById(decoded.id);
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Invalid or expired token" });
+    }
+
+    user.password = password;
+    await user.save();
+
+    res.json({ success: true, message: "Password reset successful" });
+  } catch (err) {
+    console.error("Reset password error:", err);
+    res.status(500).json({ success: false, message: "Invalid or expired token" });
+  }
+}
 
 
 
